@@ -13,13 +13,16 @@ import { supabase } from '@/integrations/supabase/client';
 import { useConfig, type AppConfig } from '@/lib/config';
 import { callEdge } from '@/lib/edge';
 import { useRealtimeDeploy } from '@/hooks/use-realtime-deploy';
-import { expandSpellingTest } from '@/lib/together-logic';
 import { TOGETHER_LOGIC_COURSE_ID, getCourseId } from '@/lib/course-ids';
 import { logEdit, learnFromEdit, logDeployHabit } from '@/lib/teacher-memory';
 import {
+  buildCombinedTitle,
+  getReadingFluencyTarget,
+  renderLanguageArtsChapterTestBody,
+  renderMathTestBody,
   renderReadingTestBody,
-  renderSpellingTestBody,
   renderCombinedReadingSpellingBody,
+  renderSpellingTestBody,
 } from '@/lib/announcement-templates';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -182,8 +185,9 @@ export default function AnnouncementCenterPage() {
       for (const mt of mathTests) {
         const lesson = mt.lesson_num || '';
         const powerUp = lesson ? config.powerUpMap[lesson] || '' : '';
-        const factTest = lesson ? `Fact Test ${lesson}` : 'Fact Test';
-        const studyGuideUrl = mt.canvas_url || '';
+        const factTest = lesson ? `Fact Test ${lesson} (${40} Division facts)` : 'Fact Test';
+        const blankStudyGuideUrl = mt.canvas_url || undefined;
+        const answerKeyUrl = mt.object_id?.startsWith('http') ? mt.object_id : undefined;
 
         // Early draft → previous Friday 4 PM ET
         drafts.push({
@@ -193,8 +197,17 @@ export default function AnnouncementCenterPage() {
           status: 'DRAFT',
           course_id: getCourseId('Math'),
           scheduled_post: getPreviousFriday4PM(),
-          title: `🔢 Heads Up: Math Test — Lesson ${lesson} (${mt.day})`,
-          content: buildMathEarlyHtml({ lesson, day: mt.day, powerUp, factTest, studyGuideUrl, weekLabel }),
+          title: `🔢 Math Test Heads-Up — Lesson ${lesson} (${mt.day})`,
+          content: renderMathTestBody({
+            lesson,
+            day: mt.day,
+            powerUp,
+            factTestLabel: factTest,
+            factCount: 40,
+            blankStudyGuideUrl,
+            answerKeyUrl,
+            reminderTone: 'early',
+          }),
         });
 
         // Urgent draft → Wednesday before test 4 PM ET
@@ -205,8 +218,17 @@ export default function AnnouncementCenterPage() {
           status: 'DRAFT',
           course_id: getCourseId('Math'),
           scheduled_post: getWednesdayBefore(mt.day),
-          title: `⚠️ Tomorrow-ish: Math Test Lesson ${lesson}`,
-          content: buildMathUrgentHtml({ lesson, day: mt.day, powerUp, factTest, studyGuideUrl }),
+          title: `⚠️ Math Test Reminder — Lesson ${lesson}`,
+          content: renderMathTestBody({
+            lesson,
+            day: mt.day,
+            powerUp,
+            factTestLabel: factTest,
+            factCount: 40,
+            blankStudyGuideUrl,
+            answerKeyUrl,
+            reminderTone: 'urgent',
+          }),
         });
       }
 
@@ -217,9 +239,7 @@ export default function AnnouncementCenterPage() {
         const rNum = readingTest?.lesson_num || '';
         const sNum = parseInt(spellingTest?.lesson_num || '0', 10) || 0;
         const dateStr = readingTest?.day || spellingTest?.day || 'this week';
-        const spellingExp = sNum > 0
-          ? expandSpellingTest(sNum, (config.spellingWordBank || {}) as Record<string, string[]>)
-          : null;
+        const rFluency = getReadingFluencyTarget(rNum);
 
         drafts.push({
           week_id: selectedWeekId,
@@ -228,13 +248,23 @@ export default function AnnouncementCenterPage() {
           status: 'DRAFT',
           course_id: TOGETHER_LOGIC_COURSE_ID,
           scheduled_post: getNextFriday4PM(),
-          title: `📚 Reading Mastery Test ${rNum} and Fluency Checkout: ${dateStr}`,
-          content: buildReadingSpellingHtml({
-            testNum: rNum,
-            testDate: dateStr,
-            checkoutLesson: rNum,
-            spellingFocus: spellingExp?.focusWords || [],
-            spellingTestNum: sNum || null,
+          title: buildCombinedTitle(weekLabel),
+          content: renderCombinedReadingSpellingBody({
+            weekLabel,
+            reading: readingTest
+              ? {
+                  lessonNum: rNum,
+                  readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
+                  fluencyGoalWpm: rFluency.wpm,
+                  fluencyMaxErrors: rFluency.maxErrors,
+                  checkoutLesson: rNum,
+                  blankStudyGuideUrl: readingTest.canvas_url || undefined,
+                  answerKeyUrl: readingTest.object_id?.startsWith('http') ? readingTest.object_id : undefined,
+                }
+              : undefined,
+            spelling: sNum
+              ? { testNum: sNum, wordBank: config.spellingWordBank || {} }
+              : undefined,
           }),
         });
       }
@@ -251,6 +281,25 @@ export default function AnnouncementCenterPage() {
           scheduled_post: getNextFriday4PM(),
           title: `✏️ Language Arts — ${weekLabel} Overview`,
           content: buildSubjectSummaryHtml('Language Arts', laRows, weekLabel),
+        });
+      }
+      const laChapterTest = laRows.find((r) => /test/i.test(r.type || ''));
+      if (laChapterTest) {
+        const chapterLabel = laChapterTest.lesson_num || laChapterTest.type || 'Current Chapter';
+        drafts.push({
+          week_id: selectedWeekId,
+          subject: 'Language Arts',
+          type: 'test_reminder',
+          status: 'DRAFT',
+          course_id: getCourseId('Language Arts'),
+          scheduled_post: getWednesdayBefore(laChapterTest.day || 'Friday'),
+          title: `📖 Language Arts Chapter Test — ${chapterLabel}`,
+          content: renderLanguageArtsChapterTestBody({
+            chapterLabel,
+            testDay: laChapterTest.day || undefined,
+            blankStudyGuideUrl: laChapterTest.canvas_url || undefined,
+            answerKeyUrl: laChapterTest.object_id?.startsWith('http') ? laChapterTest.object_id : undefined,
+          }),
         });
       }
 
@@ -310,12 +359,15 @@ export default function AnnouncementCenterPage() {
       return;
     }
     try {
-      const html = buildReadingSpellingHtml({
-        testNum: rmTestNum,
-        testDate: rmTestDate,
-        checkoutLesson: rmCheckoutLesson || rmTestNum,
-        spellingFocus: [],
-        spellingTestNum: null,
+      const rmFluency = getReadingFluencyTarget(rmTestNum);
+      const html = renderCombinedReadingSpellingBody({
+        reading: {
+          lessonNum: rmTestNum,
+          readingTestPhrases: config?.autoLogic?.readingTestPhrases || [],
+          fluencyGoalWpm: rmFluency.wpm,
+          fluencyMaxErrors: rmFluency.maxErrors,
+          checkoutLesson: rmCheckoutLesson || rmTestNum,
+        },
       });
       const { error } = await supabase.from('announcements').insert({
         week_id: selectedWeekId || null,
@@ -324,7 +376,7 @@ export default function AnnouncementCenterPage() {
         status: 'DRAFT',
         course_id: TOGETHER_LOGIC_COURSE_ID,
         scheduled_post: getNextFriday4PM(),
-        title: `📚 Reading Mastery Test ${rmTestNum} and Fluency Checkout: ${rmTestDate}`,
+        title: `📚 Reading Mastery Test ${rmTestNum} — ${rmTestDate}`,
         content: html,
       });
       if (error) throw error;
@@ -346,6 +398,7 @@ export default function AnnouncementCenterPage() {
     if (type === 'spelling_test' || type === 'reading_test' || type === 'combined') {
       return TOGETHER_LOGIC_COURSE_ID;
     }
+    if (type === 'language_arts_chapter_test') return config?.courseIds['Language Arts'] || null;
     if (type === 'weekly_summary') {
       return config?.courseIds[tplSummarySubject] || null;
     }
@@ -371,10 +424,11 @@ export default function AnnouncementCenterPage() {
           lesson,
           day: 'Friday',
           powerUp,
-          factTest: `Fact Test ${lesson}`,
-          studyGuideUrl: '',
+          factTestLabel: `Fact Test ${lesson} (40 Division facts)`,
+          factCount: 40,
+          reminderTone: formType === 'math_early' ? 'early' as const : 'urgent' as const,
         };
-        const html = formType === 'math_early' ? buildMathEarlyHtml(args) : buildMathUrgentHtml(args);
+        const html = renderMathTestBody(args);
         setFormTitle(formType === 'math_early'
           ? `🔢 Heads Up: Math Test — Lesson ${lesson}`
           : `⚠️ Math Test Lesson ${lesson} — 2 Days Out`);
@@ -393,9 +447,13 @@ export default function AnnouncementCenterPage() {
       } else if (formType === 'reading_test') {
         const lessonNum = tplLessonNum || tplTestNum;
         if (!lessonNum) { toast.error('Lesson / Test Number required'); return; }
+        const { wpm: rtWpm, maxErrors: rtMaxErrors } = getReadingFluencyTarget(lessonNum);
         const html = renderReadingTestBody({
           lessonNum,
           readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
+          fluencyGoalWpm: rtWpm,
+          fluencyMaxErrors: rtMaxErrors,
+          checkoutLesson: lessonNum,
         });
         setFormTitle(`📚 Reading Mastery Test ${lessonNum} — Reminder`);
         setFormContent(html);
@@ -403,15 +461,32 @@ export default function AnnouncementCenterPage() {
       } else if (formType === 'combined') {
         const lessonNum = tplLessonNum || tplTestNum;
         const sNum = parseInt(tplTestNum || tplLessonNum, 10);
+        const cFluency = getReadingFluencyTarget(lessonNum);
         const html = renderCombinedReadingSpellingBody({
           reading: lessonNum
-            ? { lessonNum, readingTestPhrases: config.autoLogic?.readingTestPhrases || [] }
+            ? {
+                lessonNum,
+                readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
+                fluencyGoalWpm: cFluency.wpm,
+                fluencyMaxErrors: cFluency.maxErrors,
+                checkoutLesson: lessonNum,
+              }
             : undefined,
           spelling: sNum ? { testNum: sNum, wordBank: config.spellingWordBank || {} } : undefined,
         });
         setFormTitle(`📚 Reading & Spelling — Combined Reminder`);
         setFormContent(html);
         setFormSubject('Reading');
+      } else if (formType === 'language_arts_chapter_test') {
+        const chapterLabel = tplLessonNum || tplTestNum;
+        if (!chapterLabel) { toast.error('Chapter number required'); return; }
+        const html = renderLanguageArtsChapterTestBody({
+          chapterLabel,
+          testDay: 'Friday',
+        });
+        setFormTitle(`📖 Language Arts Chapter Test — ${chapterLabel}`);
+        setFormContent(html);
+        setFormSubject('Language Arts');
       } else if (formType === 'weekly_summary') {
         setFormTitle(`📅 ${tplSummarySubject} — Weekly Overview`);
         setFormContent(`<p>Here is what we are covering in <strong>${tplSummarySubject}</strong> this week.</p>`);
@@ -652,11 +727,12 @@ export default function AnnouncementCenterPage() {
                   <SelectItem value="weekly_summary">Weekly Summary</SelectItem>
                   <SelectItem value="math_early">Math Test — Early Reminder</SelectItem>
                   <SelectItem value="math_2day">Math Test — 2-Day Reminder</SelectItem>
-                  <SelectItem value="spelling_test">Spelling Test Reminder</SelectItem>
-                  <SelectItem value="reading_test">Reading Test Reminder</SelectItem>
-                  <SelectItem value="combined">Reading + Spelling Combined</SelectItem>
-                </SelectContent>
-              </Select>
+                   <SelectItem value="spelling_test">Spelling Test Reminder</SelectItem>
+                   <SelectItem value="reading_test">Reading Test Reminder</SelectItem>
+                   <SelectItem value="combined">Reading + Spelling Combined</SelectItem>
+                   <SelectItem value="language_arts_chapter_test">Language Arts Chapter Test</SelectItem>
+                 </SelectContent>
+               </Select>
             </div>
 
             {formType !== 'custom' && (
@@ -672,9 +748,9 @@ export default function AnnouncementCenterPage() {
                     />
                   </div>
                 )}
-                {(formType === 'spelling_test' || formType === 'reading_test' || formType === 'combined') && (
+                {(formType === 'spelling_test' || formType === 'reading_test' || formType === 'combined' || formType === 'language_arts_chapter_test') && (
                   <div>
-                    <Label className="text-xs">Lesson / Test Number</Label>
+                    <Label className="text-xs">{formType === 'language_arts_chapter_test' ? 'Chapter Number' : 'Lesson / Test Number'}</Label>
                     <Input
                       type="number"
                       placeholder="e.g. 12"
