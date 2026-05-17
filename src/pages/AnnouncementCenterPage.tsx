@@ -17,6 +17,7 @@ import { TOGETHER_LOGIC_COURSE_ID, getCourseId } from '@/lib/course-ids';
 import { logEdit, learnFromEdit, logDeployHabit } from '@/lib/teacher-memory';
 import {
   buildCombinedTitle,
+  getReadingFluencyTarget,
   renderLanguageArtsChapterTestBody,
   renderMathTestBody,
   renderReadingTestBody,
@@ -238,6 +239,7 @@ export default function AnnouncementCenterPage() {
         const rNum = readingTest?.lesson_num || '';
         const sNum = parseInt(spellingTest?.lesson_num || '0', 10) || 0;
         const dateStr = readingTest?.day || spellingTest?.day || 'this week';
+        const rFluency = getReadingFluencyTarget(rNum);
 
         drafts.push({
           week_id: selectedWeekId,
@@ -253,8 +255,8 @@ export default function AnnouncementCenterPage() {
               ? {
                   lessonNum: rNum,
                   readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
-                  fluencyGoalWpm: 130,
-                  fluencyMaxErrors: 2,
+                  fluencyGoalWpm: rFluency.wpm,
+                  fluencyMaxErrors: rFluency.maxErrors,
                   checkoutLesson: rNum,
                   blankStudyGuideUrl: readingTest.canvas_url || undefined,
                   answerKeyUrl: readingTest.object_id?.startsWith('http') ? readingTest.object_id : undefined,
@@ -357,12 +359,13 @@ export default function AnnouncementCenterPage() {
       return;
     }
     try {
+      const rmFluency = getReadingFluencyTarget(rmTestNum);
       const html = renderCombinedReadingSpellingBody({
         reading: {
           lessonNum: rmTestNum,
           readingTestPhrases: config?.autoLogic?.readingTestPhrases || [],
-          fluencyGoalWpm: 130,
-          fluencyMaxErrors: 2,
+          fluencyGoalWpm: rmFluency.wpm,
+          fluencyMaxErrors: rmFluency.maxErrors,
           checkoutLesson: rmCheckoutLesson || rmTestNum,
         },
       });
@@ -444,11 +447,12 @@ export default function AnnouncementCenterPage() {
       } else if (formType === 'reading_test') {
         const lessonNum = tplLessonNum || tplTestNum;
         if (!lessonNum) { toast.error('Lesson / Test Number required'); return; }
+        const { wpm: rtWpm, maxErrors: rtMaxErrors } = getReadingFluencyTarget(lessonNum);
         const html = renderReadingTestBody({
           lessonNum,
           readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
-          fluencyGoalWpm: 130,
-          fluencyMaxErrors: 2,
+          fluencyGoalWpm: rtWpm,
+          fluencyMaxErrors: rtMaxErrors,
           checkoutLesson: lessonNum,
         });
         setFormTitle(`📚 Reading Mastery Test ${lessonNum} — Reminder`);
@@ -457,13 +461,14 @@ export default function AnnouncementCenterPage() {
       } else if (formType === 'combined') {
         const lessonNum = tplLessonNum || tplTestNum;
         const sNum = parseInt(tplTestNum || tplLessonNum, 10);
+        const cFluency = getReadingFluencyTarget(lessonNum);
         const html = renderCombinedReadingSpellingBody({
           reading: lessonNum
             ? {
                 lessonNum,
                 readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
-                fluencyGoalWpm: 130,
-                fluencyMaxErrors: 2,
+                fluencyGoalWpm: cFluency.wpm,
+                fluencyMaxErrors: cFluency.maxErrors,
                 checkoutLesson: lessonNum,
               }
             : undefined,

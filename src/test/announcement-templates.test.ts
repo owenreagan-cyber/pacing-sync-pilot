@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getReadingFluencyTarget,
   renderCombinedReadingSpellingBody,
   renderLanguageArtsChapterTestBody,
   renderMathTestBody,
@@ -86,5 +87,52 @@ describe('announcement templates', () => {
     expect(html).toContain('Focus words (21–25)');
     expect(html).toContain('u, v, w, x, y');
     expect(html).toContain('Challenge sentence');
+  });
+});
+
+describe('getReadingFluencyTarget', () => {
+  it('returns 100 wpm for tests 1–7 (Early Program)', () => {
+    for (const n of [1, 2, 3, 4, 5, 6, 7]) {
+      expect(getReadingFluencyTarget(n)).toEqual({ wpm: 100, maxErrors: 2 });
+      expect(getReadingFluencyTarget(String(n))).toEqual({ wpm: 100, maxErrors: 2 });
+    }
+  });
+
+  it('returns 115 wpm for tests 8–10 (Mid Program)', () => {
+    for (const n of [8, 9, 10]) {
+      expect(getReadingFluencyTarget(n)).toEqual({ wpm: 115, maxErrors: 2 });
+      expect(getReadingFluencyTarget(String(n))).toEqual({ wpm: 115, maxErrors: 2 });
+    }
+  });
+
+  it('returns 130 wpm for tests 11–13 (Advanced Program)', () => {
+    for (const n of [11, 12, 13]) {
+      expect(getReadingFluencyTarget(n)).toEqual({ wpm: 130, maxErrors: 2 });
+      expect(getReadingFluencyTarget(String(n))).toEqual({ wpm: 130, maxErrors: 2 });
+    }
+  });
+
+  it('returns 130 wpm for out-of-range high values (safe default)', () => {
+    expect(getReadingFluencyTarget(14)).toEqual({ wpm: 130, maxErrors: 2 });
+    expect(getReadingFluencyTarget(20)).toEqual({ wpm: 130, maxErrors: 2 });
+  });
+
+  it('returns 100 wpm for invalid / edge inputs (safe default)', () => {
+    expect(getReadingFluencyTarget(0)).toEqual({ wpm: 100, maxErrors: 2 });
+    expect(getReadingFluencyTarget(-1)).toEqual({ wpm: 100, maxErrors: 2 });
+    expect(getReadingFluencyTarget(null)).toEqual({ wpm: 100, maxErrors: 2 });
+    expect(getReadingFluencyTarget(undefined)).toEqual({ wpm: 100, maxErrors: 2 });
+    expect(getReadingFluencyTarget('abc')).toEqual({ wpm: 100, maxErrors: 2 });
+  });
+
+  it('renders reading announcement with correct fluency text per test tier', () => {
+    const html5 = renderReadingTestBody({ lessonNum: '5', readingTestPhrases: [], fluencyGoalWpm: getReadingFluencyTarget(5).wpm, fluencyMaxErrors: 2 });
+    expect(html5).toContain('100 words per minute');
+
+    const html9 = renderReadingTestBody({ lessonNum: '9', readingTestPhrases: [], fluencyGoalWpm: getReadingFluencyTarget(9).wpm, fluencyMaxErrors: 2 });
+    expect(html9).toContain('115 words per minute');
+
+    const html12 = renderReadingTestBody({ lessonNum: '12', readingTestPhrases: [], fluencyGoalWpm: getReadingFluencyTarget(12).wpm, fluencyMaxErrors: 2 });
+    expect(html12).toContain('130 words per minute');
   });
 });

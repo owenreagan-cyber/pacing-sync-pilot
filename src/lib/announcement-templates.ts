@@ -69,6 +69,21 @@ export interface CombinedTestContext {
   weekLabel?: string;
 }
 
+/**
+ * Returns the fluency target (wpm and maxErrors) for a given Reading test number.
+ * Tests 1–7:  100 wpm, 2 errors  (Early Program)
+ * Tests 8–10: 115 wpm, 2 errors  (Mid Program)
+ * Tests 11+:  130 wpm, 2 errors  (Advanced Program)
+ * Falls back to 100 wpm for invalid / out-of-range values.
+ */
+export function getReadingFluencyTarget(testNum: string | number | null | undefined): { wpm: number; maxErrors: number } {
+  const n = typeof testNum === 'string' ? parseInt(testNum, 10) : (testNum ?? NaN);
+  if (!Number.isFinite(n) || n < 1) return { wpm: 100, maxErrors: 2 };
+  if (n <= 7)  return { wpm: 100, maxErrors: 2 };
+  if (n <= 10) return { wpm: 115, maxErrors: 2 };
+  return { wpm: 130, maxErrors: 2 };
+}
+
 export function renderMathTestBody(ctx: MathTestContext): string {
   const toneLine = ctx.reminderTone === 'urgent'
     ? `<p><strong>Quick reminder:</strong> our Math assessment is coming up very soon.</p>`
