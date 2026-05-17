@@ -113,7 +113,14 @@ function buildInClass(subject: string, d: DayData): string | null {
   const n = (d.lesson_num || '').trim();
   if (!n) return explicit || null;
   switch (subject) {
-    case 'Math': return `Lesson ${n}`;
+    case 'Math': {
+      const t = (d.type || '').toLowerCase();
+      if (t === 'test') return `Written Test ${n}`;
+      if (t === 'fact test') return `Fact Test ${n}`;
+      if (t === 'study guide') return `Study Guide ${n}`;
+      if (t === 'investigation') return `Investigation ${n}`;
+      return `Lesson ${n}`;
+    }
     case 'Reading': return `Reading Lesson ${n}`;
     case 'Spelling': return `Spelling Lesson ${n}`;
     case 'Language Arts': {
@@ -451,12 +458,14 @@ export default function PacingEntryPage({
               const refs = buildResourceRefs(subj, d);
               if (!refs.length) return d.resources || null;
               const matched = contentMap
-                .filter((cm) => refs.includes(cm.lesson_ref))
-                .map((cm) => (cm.canvas_url
-                  ? `${cm.canonical_name} | ${cm.canvas_url}`
-                  : cm.canonical_name))
-                .join('\n');
-              return matched || d.resources || null;
+                .filter((cm) => refs.includes(cm.lesson_ref) && cm.canonical_name)
+                .map((cm) => ({
+                  label: cm.canonical_name,
+                  url: cm.canvas_url || undefined,
+                  group: (cm as any).group || undefined,
+                }));
+              if (!matched.length) return d.resources || null;
+              return JSON.stringify(matched);
             })(),
             create_assign: isNoAssign || isFriday || laBlocked || d.type === 'CLT Testing' ? false : d.create_assign,
             hint_override: d.hint_override ?? null,
@@ -1007,7 +1016,7 @@ export default function PacingEntryPage({
                     rows={8}
                     value={pastedText}
                     onChange={(e) => setPastedText(e.target.value)}
-                    placeholder={`Paste or type your pacing for this week.\n\nExample:\nMath: 101, 102, 103, 104, Test 10\nReading: 109, 110, 111, 112, Test 11\nSpelling: L97, L98, L99, review, Test\nELA: 12.1, 12.2, 12.3 CP44, CP44, Test\nHistory: Ch5, Ch5, Ch6, Ch6, -\nScience: -, -, -, -, -`}
+                    placeholder={`Paste or type your pacing for this week.\n\nExample:\nMath: 101, 102, 103, 104, Test 10\nReading: 109, 110, 111, 112, Test 11\nSpelling: L97, L98, L99, review, Test\n[...]
                     className="text-xs font-mono"
                   />
                   <Button onClick={handleParseText} disabled={aiParsing} className="w-full gap-1.5">
