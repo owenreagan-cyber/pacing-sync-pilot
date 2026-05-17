@@ -209,53 +209,55 @@ export default function AssignmentsPage() {
       for (const subject of SUBJECTS) {
         for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
           const day = DAYS[dayIdx];
-          const row = pacingRows.find((r: any) => r.subject === subject && r.day === day);
-          if (!row || !row.type || row.type === '-' || row.type === 'No Class') continue;
-          if (!row.create_assign) continue;
+          const dayRows = pacingRows.filter((r: any) => r.subject === subject && r.day === day);
+          for (const row of dayRows) {
+            if (!row.type || row.type === '-' || row.type === 'No Class') continue;
+            if (!row.create_assign) continue;
 
-          const cell: PacingCell = {
-            value: row.in_class || row.lesson_num || '',
-            lessonNum: row.lesson_num || '',
-            isTest: (row.type || '').toLowerCase().includes('test'),
-            isReview: (row.in_class || '').toLowerCase().includes('review'),
-            isNoClass: row.type === '-' || row.type === 'No Class',
-            hint_override: (row as any).hint_override ?? null,
-          };
+            const cell: PacingCell = {
+              value: row.in_class || row.lesson_num || '',
+              lessonNum: row.lesson_num || '',
+              isTest: (row.type || '').toLowerCase().includes('test'),
+              isReview: (row.in_class || '').toLowerCase().includes('review'),
+              isNoClass: row.type === '-' || row.type === 'No Class',
+              hint_override: (row as any).hint_override ?? null,
+            };
 
-          // Math Triple Logic
-          if (subject === 'Math') {
-            const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
-            for (const a of items) built.push(toPreview(a));
-            continue;
+            // Math Triple Logic
+            if (subject === 'Math') {
+              const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
+              for (const a of items) built.push(toPreview(a));
+              continue;
+            }
+
+            // Reading Double-Split: Test + Checkout
+            if (subject === 'Reading' && cell.isTest) {
+              const test = await buildAssignmentForCell('Reading', dayIdx, cell,
+                { config, contentMap, weekDates }, { type: 'Test' });
+              if (test) built.push(toPreview(test));
+              const checkout = await buildAssignmentForCell('Reading', dayIdx, cell,
+                { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
+              if (checkout) built.push(toPreview(checkout));
+              continue;
+            }
+
+            // Spelling: only Tests create assignments
+            if (subject === 'Spelling' && !cell.isTest) continue;
+
+            // Language Arts: only CP / Classroom Practice / Test
+            if (subject === 'Language Arts') {
+              const upper = (row.type || '').toUpperCase();
+              if (!upper.includes('CP') && !upper.includes('TEST') &&
+                  !upper.includes('CLASSROOM PRACTICE')) continue;
+            }
+
+            // History / Science: never create assignments
+            if (subject === 'History' || subject === 'Science') continue;
+
+            const a = await buildAssignmentForCell(subject, dayIdx, cell,
+              { config, contentMap, weekDates });
+            if (a) built.push(toPreview(a));
           }
-
-          // Reading Double-Split: Test + Checkout
-          if (subject === 'Reading' && cell.isTest) {
-            const test = await buildAssignmentForCell('Reading', dayIdx, cell,
-              { config, contentMap, weekDates }, { type: 'Test' });
-            if (test) built.push(toPreview(test));
-            const checkout = await buildAssignmentForCell('Reading', dayIdx, cell,
-              { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
-            if (checkout) built.push(toPreview(checkout));
-            continue;
-          }
-
-          // Spelling: only Tests create assignments
-          if (subject === 'Spelling' && !cell.isTest) continue;
-
-          // Language Arts: only CP / Classroom Practice / Test
-          if (subject === 'Language Arts') {
-            const upper = (row.type || '').toUpperCase();
-            if (!upper.includes('CP') && !upper.includes('TEST') &&
-                !upper.includes('CLASSROOM PRACTICE')) continue;
-          }
-
-          // History / Science: never create assignments
-          if (subject === 'History' || subject === 'Science') continue;
-
-          const a = await buildAssignmentForCell(subject, dayIdx, cell,
-            { config, contentMap, weekDates });
-          if (a) built.push(toPreview(a));
         }
       }
 
@@ -474,44 +476,46 @@ export default function AssignmentsPage() {
       for (const subject of SUBJECTS) {
         for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
           const day = DAYS[dayIdx];
-          const row = rows.find((r: any) => r.subject === subject && r.day === day);
-          if (!row || !row.type || row.type === '-' || row.type === 'No Class') continue;
-          if (!row.create_assign) continue;
+          const dayRows = rows.filter((r: any) => r.subject === subject && r.day === day);
+          for (const row of dayRows) {
+            if (!row.type || row.type === '-' || row.type === 'No Class') continue;
+            if (!row.create_assign) continue;
 
-          const cell: PacingCell = {
-            value: row.in_class || row.lesson_num || '',
-            lessonNum: row.lesson_num || '',
-            isTest: (row.type || '').toLowerCase().includes('test'),
-            isReview: (row.in_class || '').toLowerCase().includes('review'),
-            isNoClass: row.type === '-' || row.type === 'No Class',
-            hint_override: (row as any).hint_override ?? null,
-          };
+            const cell: PacingCell = {
+              value: row.in_class || row.lesson_num || '',
+              lessonNum: row.lesson_num || '',
+              isTest: (row.type || '').toLowerCase().includes('test'),
+              isReview: (row.in_class || '').toLowerCase().includes('review'),
+              isNoClass: row.type === '-' || row.type === 'No Class',
+              hint_override: (row as any).hint_override ?? null,
+            };
 
-          if (subject === 'Math') {
-            const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
-            built.push(...items);
-            continue;
-          }
-          if (subject === 'Reading' && cell.isTest) {
-            const t = await buildAssignmentForCell('Reading', dayIdx, cell,
-              { config, contentMap, weekDates }, { type: 'Test' });
-            if (t) built.push(t);
-            const c = await buildAssignmentForCell('Reading', dayIdx, cell,
-              { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
-            if (c) built.push(c);
-            continue;
-          }
-          if (subject === 'Spelling' && !cell.isTest) continue;
-          if (subject === 'Language Arts') {
-            const upper = (row.type || '').toUpperCase();
-            if (!upper.includes('CP') && !upper.includes('TEST') &&
-                !upper.includes('CLASSROOM PRACTICE')) continue;
-          }
-          if (subject === 'History' || subject === 'Science') continue;
+            if (subject === 'Math') {
+              const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
+              built.push(...items);
+              continue;
+            }
+            if (subject === 'Reading' && cell.isTest) {
+              const t = await buildAssignmentForCell('Reading', dayIdx, cell,
+                { config, contentMap, weekDates }, { type: 'Test' });
+              if (t) built.push(t);
+              const c = await buildAssignmentForCell('Reading', dayIdx, cell,
+                { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
+              if (c) built.push(c);
+              continue;
+            }
+            if (subject === 'Spelling' && !cell.isTest) continue;
+            if (subject === 'Language Arts') {
+              const upper = (row.type || '').toUpperCase();
+              if (!upper.includes('CP') && !upper.includes('TEST') &&
+                  !upper.includes('CLASSROOM PRACTICE')) continue;
+            }
+            if (subject === 'History' || subject === 'Science') continue;
 
-          const a = await buildAssignmentForCell(subject, dayIdx, cell,
-            { config, contentMap, weekDates });
-          if (a) built.push(a);
+            const a = await buildAssignmentForCell(subject, dayIdx, cell,
+              { config, contentMap, weekDates });
+            if (a) built.push(a);
+          }
         }
       }
 

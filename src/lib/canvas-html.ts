@@ -6,6 +6,7 @@ import { injectFileLinks, injectAssignmentLink, type ContentMapEntry } from './a
 import { COURSE_IDS, getCourseId } from './course-ids';
 import { parseResources, type Resource } from '@/types/thales';
 import type { CalendarEvent } from './school-calendar';
+import { matchMultipleResources } from './content-map-matching';
 
 const KL_WRAPPER = `id="kl_wrapper_3" class="kl_circle_left kl_wrapper" style="border-style: none;"`;
 const KL_BANNER_H2 = `class="" style="color: #ffffff; background-color: #0065a7; text-align: center;"`;
@@ -118,19 +119,22 @@ function atHomeLabel(subject: string): string {
   return subject === 'Math' ? 'Homework' : 'At Home';
 }
 
-function renderResource(r: Resource): string {
-  if (!r.url) return `      <p><strong>${r.label}</strong></p>`;
-  // Normalize: strip /download?download_frd=1&verifier=... and ?wrap=1
-  const clean = r.url
-    .replace(/\/download\?.*$/, '')
-    .replace(/\?wrap=1$/, '');
-  const apiEndpoint = clean.replace(
-    /^(https?:\/\/[^/]+)\/courses\/(\d+)\/files\//,
-    '$1/api/v1/courses/$2/files/',
-  );
-  return `      <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
-    + `title="${r.label}" href="${clean}?wrap=1" target="_blank" rel="noopener" `
-    + `data-api-endpoint="${apiEndpoint}" data-api-returntype="File">${r.label}</a></p>`;
+function renderResource(r: Resource & { url?: string | string[] }): string {
+  const urls = Array.isArray(r.url) ? r.url.filter(Boolean) : (r.url ? [r.url] : []);
+  if (urls.length === 0) return `      <p><strong>${r.label}</strong></p>`;
+  return urls.map((rawUrl, index) => {
+    const clean = rawUrl
+      .replace(/\/download\?.*$/, '')
+      .replace(/\?wrap=1$/, '');
+    const apiEndpoint = clean.replace(
+      /^(https?:\/\/[^/]+)\/courses\/(\d+)\/files\//,
+      '$1/api/v1/courses/$2/files/',
+    );
+    const title = urls.length > 1 ? `${r.label} ${index + 1}` : r.label;
+    return `      <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
+      + `title="${title}" href="${clean}?wrap=1" target="_blank" rel="noopener" `
+      + `data-api-endpoint="${apiEndpoint}" data-api-returntype="File">${title}</a></p>`;
+  }).join('\n');
 }
 
 function calendarDayLabel(
@@ -231,13 +235,29 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
   parts.push(`    </div>`);
 
   const mergedResources: Resource[] = [...subjectResources];
-  const seen = new Set(subjectResources.map((r) => r.label));
+  const seen = new Set(subjectResources.map((r) => `${r.group || ''}::${r.label}::${r.url || ''}`));
   for (const row of rows) {
     if (!row.resources) continue;
     for (const r of parseResources(row.resources)) {
-      if (!seen.has(r.label)) {
-        seen.add(r.label);
+      const key = `${r.group || ''}::${r.label}::${r.url || ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
         mergedResources.push(r);
+      }
+    }
+  }
+  for (const row of rows) {
+    for (const group of matchMultipleResources(contentMap, row.subject, row.lesson_num)) {
+      for (const resource of group.resources) {
+        const groupedResource: Resource = {
+          ...resource,
+          group: group.label,
+        };
+        const key = `${groupedResource.group || ''}::${groupedResource.label}::${groupedResource.url || ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          mergedResources.push(groupedResource);
+        }
       }
     }
   }
