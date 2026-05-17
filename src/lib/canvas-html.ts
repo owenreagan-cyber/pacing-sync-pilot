@@ -83,6 +83,7 @@ export interface HomeroomPageParams {
   dateRange: string;
   quarterColor: string;
   calendarReminders: string;
+  homeroomNotesHtml?: string;
   homeroomNotes?: string;
   birthdays?: string;
   schoolNews?: string;
@@ -119,13 +120,16 @@ function atHomeLabel(subject: string): string {
 
 function renderResource(r: Resource): string {
   if (!r.url) return `      <p><strong>${r.label}</strong></p>`;
-  const url = r.url.replace(/\?wrap=1$/, '');
-  const apiEndpoint = url.replace(
+  // Normalize: strip /download?download_frd=1&verifier=... and ?wrap=1
+  const clean = r.url
+    .replace(/\/download\?.*$/, '')
+    .replace(/\?wrap=1$/, '');
+  const apiEndpoint = clean.replace(
     /^(https?:\/\/[^/]+)\/courses\/(\d+)\/files\//,
     '$1/api/v1/courses/$2/files/',
   );
   return `      <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
-    + `title="${r.label}" href="${url}?wrap=1" target="_blank" rel="noopener" `
+    + `title="${r.label}" href="${clean}?wrap=1" target="_blank" rel="noopener" `
     + `data-api-endpoint="${apiEndpoint}" data-api-returntype="File">${r.label}</a></p>`;
 }
 
@@ -331,6 +335,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 export function generateHomeroomPageHtml(params: HomeroomPageParams): string {
   const {
     dateRange,
+    homeroomNotesHtml,
     homeroomNotes,
     birthdays,
     calendarReminders,
@@ -346,18 +351,15 @@ export function generateHomeroomPageHtml(params: HomeroomPageParams): string {
   <p style="margin: 8px 0 0;">${dateRange || 'This Week'}</p>
 </div>`);
 
-  if (homeroomNotes?.trim()) {
-    const items = homeroomNotes
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => `    <li>${l}</li>`)
-      .join('\n');
+  const notesBody = homeroomNotesHtml?.trim() || (
+    homeroomNotes?.trim()
+      ? homeroomNotes.split('\n').filter(Boolean).map(l => `  <p>${l}</p>`).join('\n')
+      : ''
+  );
+  if (notesBody) {
     parts.push(`<div style="margin: 16px 0; padding: 16px; background: #f8f6ff; border-radius: 8px; border-left: 4px solid #6644bb;">
   <h3 style="margin: 0 0 8px; color: #6644bb;">📝 Homeroom Notes</h3>
-  <ul>
-${items}
-  </ul>
+${notesBody}
 </div>`);
   }
 
