@@ -1,7 +1,6 @@
 import {
   Database,
   Globe,
-  ClipboardList,
   Megaphone,
   Mail,
   FolderSearch,
@@ -11,9 +10,9 @@ import {
   Eye,
   ShieldCheck,
   Library,
-  Brain,
   Zap,
   ClipboardCheck,
+  ChevronDown,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
@@ -29,10 +28,16 @@ import {
   SidebarHeader,
   SidebarFooter,
   useSidebar,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
+  SidebarMenuItem as SidebarMenuItemComponent,
+  SidebarCollapsible,
 } from '@/components/ui/sidebar';
 import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
 
-const navItems = [
+const PRIMARY_NAV = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Pacing Entry', url: '/pacing', icon: Database },
   { title: 'Pacing Viewer', url: '/pacing-viewer', icon: Eye },
@@ -40,17 +45,15 @@ const navItems = [
   { title: 'Assignments', url: '/assignments', icon: ShieldCheck },
   { title: 'Announcements', url: '/announcements', icon: Megaphone },
   { title: 'Newsletter', url: '/newsletter', icon: Mail },
-  { title: 'File Organizer', url: '/files', icon: FolderSearch },
-  { title: 'Content Registry', url: '/content-registry', icon: Library },
-  { title: 'Health Monitor', url: '/health', icon: Activity },
-  { title: 'Memory', url: '/memory', icon: Brain },
-  { title: 'Canvas Brain', url: '/canvas-brain', icon: Brain },
-  { title: 'Automation', url: '/automation', icon: Zap },
-  { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
-const diagnosticsItems = [
+const TOOLS_NAV = [
+  { title: 'File Organizer', url: '/files', icon: FolderSearch },
+  { title: 'Content Registry', url: '/content-registry', icon: Library },
   { title: 'Canvas Auditor', url: '/canvas-auditor', icon: ClipboardCheck },
+  { title: 'Health Monitor', url: '/health', icon: Activity },
+  { title: 'Automation', url: '/automation', icon: Zap },
+  { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
 interface AppSidebarProps {
@@ -71,6 +74,7 @@ export function AppSidebar({
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
   const location = useLocation();
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   const riskColorClass =
     riskLevel === 'HIGH'
@@ -122,7 +126,7 @@ export function AppSidebar({
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => (
+              {PRIMARY_NAV.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink
@@ -148,32 +152,48 @@ export function AppSidebar({
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-[10px] uppercase tracking-wider">
-            Diagnostics
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {diagnosticsItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to={item.url}
-                      className="hover:bg-sidebar-accent/50 transition-colors"
-                      activeClassName="text-white font-semibold"
-                      style={
-                        location.pathname === item.url
-                          ? { backgroundColor: quarterColor }
-                          : undefined
-                      }
-                    >
-                      <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
+          <div className="flex items-center justify-between px-2">
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-[10px] uppercase tracking-wider">
+              {!collapsed && 'Tools & Admin'}
+            </SidebarGroupLabel>
+            {!collapsed && (
+              <button
+                onClick={() => setToolsOpen(!toolsOpen)}
+                className="p-1 hover:bg-sidebar-accent rounded transition-colors"
+              >
+                <ChevronDown
+                  className={`h-3.5 w-3.5 text-sidebar-foreground/50 transition-transform ${
+                    toolsOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+            )}
+          </div>
+          {(collapsed || toolsOpen) && (
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {TOOLS_NAV.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to={item.url}
+                        className="hover:bg-sidebar-accent/50 transition-colors"
+                        activeClassName="text-white font-semibold"
+                        style={
+                          location.pathname === item.url
+                            ? { backgroundColor: quarterColor }
+                            : undefined
+                        }
+                      >
+                        <item.icon className="mr-2 h-4 w-4" />
+                        {!collapsed && <span>{item.title}</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          )}
         </SidebarGroup>
       </SidebarContent>
 
