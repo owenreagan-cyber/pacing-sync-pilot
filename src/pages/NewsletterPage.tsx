@@ -19,6 +19,7 @@ interface Newsletter {
   id: string;
   date_range: string | null;
   homeroom_notes: string | null;
+  homeroom_notes_html?: string | null;
   birthdays: string | null;
   extra_sections: { title: string; body: string }[];
   html_content: string | null;
@@ -42,6 +43,7 @@ export default function NewsletterPage() {
   const [pastedText, setPastedText] = useState('');
   const [dateRange, setDateRange] = useState('');
   const [homeroomNotes, setHomeroomNotes] = useState('');
+  const [homeroomNotesHtml, setHomeroomNotesHtml] = useState('');
   const [birthdays, setBirthdays] = useState('');
   const [extraSections, setExtraSections] = useState<{ title: string; body: string }[]>([]);
   const [calendarEvents, setCalendarEvents] = useState('');
@@ -117,14 +119,16 @@ export default function NewsletterPage() {
     setPolishing(false);
   };
 
-  const generateHtml = () => {
+  // Auto-rebuild preview when any field changes
+  useEffect(() => {
     const html = generateHomeroomPageHtml({
       weekNum: 0,
       quarter: '',
       dateRange: dateRange || 'This Week',
       quarterColor: '#6644bb',
       calendarReminders: calendarEvents,
-      homeroomNotes,
+      homeroomNotesHtml: homeroomNotesHtml || undefined,
+      homeroomNotes: homeroomNotes || undefined,
       birthdays,
       schoolNews,
       pointsOfContact,
@@ -132,9 +136,7 @@ export default function NewsletterPage() {
       footer: footerLine || DEFAULT_FOOTER,
     });
     setHtmlContent(html);
-    setPreviewMode('preview');
-    toast.success('HTML generated!');
-  };
+  }, [dateRange, homeroomNotesHtml, homeroomNotes, birthdays, schoolNews, calendarEvents, pointsOfContact, quickLinks, footerLine]);
 
   const handleSave = async () => {
     const allSections = calendarEvents.trim()
@@ -143,6 +145,7 @@ export default function NewsletterPage() {
     const payload = {
       date_range: dateRange,
       homeroom_notes: homeroomNotes,
+      homeroom_notes_html: homeroomNotesHtml,
       birthdays,
       extra_sections: allSections,
       html_content: htmlContent,
@@ -177,6 +180,7 @@ export default function NewsletterPage() {
       const payload = {
         date_range: dateRange,
         homeroom_notes: homeroomNotes,
+        homeroom_notes_html: homeroomNotesHtml,
         birthdays,
         extra_sections: allSections,
         html_content: htmlContent,
@@ -206,6 +210,7 @@ export default function NewsletterPage() {
     setActiveNewsletterId(n.id);
     setDateRange(n.date_range || '');
     setHomeroomNotes(n.homeroom_notes || '');
+    setHomeroomNotesHtml((n as any).homeroom_notes_html || '');
     setBirthdays(n.birthdays || '');
     const sections = n.extra_sections || [];
     const calSection = sections.find(s => s.title === 'Mark Your Calendars');
@@ -222,7 +227,7 @@ export default function NewsletterPage() {
 
   const handleNew = () => {
     setActiveNewsletterId(null);
-    setDateRange(''); setHomeroomNotes(''); setBirthdays('');
+    setDateRange(''); setHomeroomNotes(''); setHomeroomNotesHtml(''); setBirthdays('');
     setExtraSections([]); setCalendarEvents(''); setHtmlContent(''); setPastedText('');
     setSchoolNews(''); setPointsOfContact([]); setQuickLinks([]); setFooterLine(DEFAULT_FOOTER);
     setPreviewMode('edit');
@@ -318,6 +323,19 @@ export default function NewsletterPage() {
           <Card>
             <CardContent className="pt-6 space-y-4">
               <Input placeholder="Date range (e.g. Jan 13–17)" value={dateRange} onChange={e => setDateRange(e.target.value)} />
+              
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Homeroom Notes — Rich HTML</Label>
+                <p className="text-[11px] text-muted-foreground">Use HTML tags: &lt;p&gt;, &lt;strong&gt;, &lt;ul&gt;&lt;li&gt;, &lt;a href="..."&gt;. When filled, this replaces the plain notes field below.</p>
+                <Textarea
+                  value={homeroomNotesHtml}
+                  onChange={e => setHomeroomNotesHtml(e.target.value)}
+                  rows={8}
+                  className="text-xs font-mono"
+                  placeholder={'<p><strong>Spring Performance</strong></p>\n<p>Tuesday May 19th at 6:00 PM.</p>'}
+                />
+              </div>
+
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase">Homeroom Notes</label>
                 <Textarea value={homeroomNotes} onChange={e => setHomeroomNotes(e.target.value)} rows={4} />
@@ -434,9 +452,6 @@ export default function NewsletterPage() {
               <div className="flex gap-2">
                 <Button variant="outline" onClick={handlePolish} disabled={polishing} className="gap-1.5">
                   <Sparkles className="h-3.5 w-3.5" /> {polishing ? 'Polishing...' : 'AI Polish'}
-                </Button>
-                <Button onClick={generateHtml} className="gap-1.5">
-                  <Code className="h-3.5 w-3.5" /> Generate HTML
                 </Button>
               </div>
             </CardContent>
