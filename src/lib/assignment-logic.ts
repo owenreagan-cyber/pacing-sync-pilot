@@ -2,6 +2,13 @@
  * THALES OS — Assignment Logic Engine
  * FIX 6: Language Arts CP Rule
  * FIX 8: Spelling Test Only Rule
+ * 
+ * Assignment Grading Rules (2025–2026):
+ *  • ALL assignments: 100 points possible (viewed as percentage)
+ *  • Grading type: 'points' by default, EXCEPT Study Guides → 'pass_fail'
+ *  • Submission: 'on_paper' (all subjects)
+ *  • Math Study Guide: 0 points, pass_fail, omit_from_final_grade
+ *  • Grading weight: calculated by points_possible (100pts) and group weights
  */
 
 /**
@@ -68,24 +75,121 @@ export interface AssignmentGroupInfo {
   omitFromFinal: boolean;
 }
 
+/**
+ * Resolve assignment group metadata: title, points, grading type, and final grade inclusion.
+ * 
+ * UNIVERSAL GRADING RULES (2025–2026):
+ *  • points_possible: 100 (ALL assignments)
+ *  • grading_type: 'points' (default) | 'pass_fail' (Math Study Guide only)
+ *  • omit_from_final_grade: true (Math Study Guide) | false (all others)
+ * 
+ * Math Special Cases:
+ *  • Written Test: 100pts, points, Written Assessments, not omitted
+ *  • Fact Test: 100pts, points, Fact Assessments, not omitted
+ *  • Study Guide: 0pts (displayed as pass/fail), pass_fail, Homework/Class Work, OMITTED FROM FINAL
+ *  • Lesson HW: 100pts, points, Homework/Class Work, not omitted
+ */
 export function resolveAssignmentGroup(subject: string, type: string): AssignmentGroupInfo {
   const isTest = type.toLowerCase().includes('test');
 
   switch (subject) {
     case 'Math':
-      if (type === 'Study Guide') return { groupName: 'Homework/Class Work', points: 0, gradingType: 'points', omitFromFinal: true };
-      if (type === 'Fact Test') return { groupName: 'Fact Assessments', points: 100, gradingType: 'points', omitFromFinal: false };
-      if (isTest) return { groupName: 'Written Assessments', points: 100, gradingType: 'points', omitFromFinal: false };
-      return { groupName: 'Homework/Class Work', points: 100, gradingType: 'points', omitFromFinal: false };
+      if (type === 'Study Guide') {
+        // Math Study Guide: 0 points displayed, pass_fail grading, omit_from_final_grade
+        return {
+          groupName: 'Homework/Class Work',
+          points: 0,
+          gradingType: 'pass_fail',
+          omitFromFinal: true,
+        };
+      }
+      if (type === 'Fact Test') {
+        return {
+          groupName: 'Fact Assessments',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      if (isTest) {
+        return {
+          groupName: 'Written Assessments',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      // Regular Math lesson homework: 100pts
+      return {
+        groupName: 'Homework/Class Work',
+        points: 100,
+        gradingType: 'points',
+        omitFromFinal: false,
+      };
+
     case 'Reading':
-      if (isTest) return { groupName: 'Assessments', points: 100, gradingType: 'points', omitFromFinal: false };
-      if (type === 'Checkout') return { groupName: 'Check Out', points: 100, gradingType: 'points', omitFromFinal: false };
-      return { groupName: 'Homework', points: 100, gradingType: 'points', omitFromFinal: false };
+      if (isTest) {
+        return {
+          groupName: 'Assessments',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      if (type === 'Checkout') {
+        return {
+          groupName: 'Check Out',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      return {
+        groupName: 'Homework',
+        points: 100,
+        gradingType: 'points',
+        omitFromFinal: false,
+      };
+
+    case 'Spelling':
+      if (isTest) {
+        return {
+          groupName: 'Assessments',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      return {
+        groupName: 'Homework',
+        points: 100,
+        gradingType: 'points',
+        omitFromFinal: false,
+      };
+
     case 'Language Arts':
-      if (isTest) return { groupName: 'Assessments', points: 100, gradingType: 'points', omitFromFinal: false };
-      return { groupName: 'Classwork/Homework', points: 100, gradingType: 'points', omitFromFinal: false };
+      if (isTest) {
+        return {
+          groupName: 'Assessments',
+          points: 100,
+          gradingType: 'points',
+          omitFromFinal: false,
+        };
+      }
+      return {
+        groupName: 'Classwork/Homework',
+        points: 100,
+        gradingType: 'points',
+        omitFromFinal: false,
+      };
+
     default:
-      return { groupName: 'Assignments', points: 100, gradingType: 'points', omitFromFinal: false };
+      return {
+        groupName: 'Assignments',
+        points: 100,
+        gradingType: 'points',
+        omitFromFinal: false,
+      };
   }
 }
 
@@ -151,7 +255,8 @@ export function isInvestigationBeforeTest(
 // CANONICAL CANVAS ASSIGNMENT PAYLOAD BUILDER
 // Enforces 2025-2026 universal rules:
 //   • submission_types = ['on_paper']
-//   • grading_type = 'points' (default) | 'pass_fail' (when title contains "Study Guide")
+//   • points_possible = 100 (ALL assignments, viewed as %)
+//   • grading_type = 'points' (default) | 'pass_fail' (Math Study Guide only)
 //   • due_at = 11:59 PM Eastern Time on the assignment's date
 // ============================================================================
 
@@ -209,25 +314,24 @@ function nthSundayOfMonth(year: number, month: number, n: number): number {
 
 /**
  * Build a single Canvas assignment payload with universal rules enforced.
+ * 
+ * CRITICAL: Study Guide assignments have 0 points displayed (shown as pass/fail in Canvas).
+ * All other assignments: 100 points, viewed as percentage.
  */
 export function buildAssignmentPayload(input: BuildAssignmentInput): CanvasAssignmentPayload {
   const { subject, type, lessonNum, prefix, date, description = '', hintOverride } = input;
   const name = generateAssignmentTitle(subject, type, lessonNum, prefix, hintOverride);
   const group = resolveAssignmentGroup(subject, type);
 
-  // Universal grading_type rule: any title containing "Study Guide" is pass_fail.
-  const isStudyGuide = /study\s*guide/i.test(name);
-  const grading_type: 'points' | 'pass_fail' = isStudyGuide ? 'pass_fail' : 'points';
-
   return {
     name,
     description,
-    points_possible: isStudyGuide ? 0 : group.points,
-    grading_type,
+    points_possible: group.points, // 0 for Study Guide, 100 for all others
+    grading_type: group.gradingType, // 'pass_fail' for Study Guide, 'points' for all others
     submission_types: ['on_paper'],
     due_at: dueAt1159ET(date),
     assignment_group_name: group.groupName,
-    omit_from_final_grade: isStudyGuide ? true : group.omitFromFinal,
+    omit_from_final_grade: group.omitFromFinal,
     published: true,
   };
 }
@@ -235,9 +339,9 @@ export function buildAssignmentPayload(input: BuildAssignmentInput): CanvasAssig
 /**
  * Build the deploy array for a single pacing row, applying Synthetic Sibling
  * logic for Math Tests:
- *   1. Math Test (points, 100 pts)
- *   2. Math Fact Test (points, 100 pts) — same date
- *   3. Math Study Guide (pass_fail, 0 pts, omit_from_final) — same date
+ *   1. Math Written Test (100 pts, points)
+ *   2. Math Fact Test (100 pts, points) — same date, synthetic
+ *   3. Math Study Guide (0 pts, pass_fail, omit_from_final) — day before, synthetic
  *
  * Non-Math-Test rows return a single-element array.
  */
