@@ -15,6 +15,7 @@ const corsHeaders = {
 const COURSE_IDS: Record<string, number> = {
   Math: 21957,
   LA: 21944,
+  "Language Arts": 21944,
   Reading: 21919,
   Spelling: 21919,
   History: 21934,
@@ -194,7 +195,13 @@ class CanvasDeployer {
     let title = row.assignment_title || `${row.subject} ${row.lesson_title}`;
 
     // Math Evens/Odds rule
-    if (subject === "Math" && row.lesson_num) {
+    if (
+      subject === "Math" &&
+      row.lesson_num &&
+      !String(row.type || "").toLowerCase().includes("test") &&
+      !String(row.assignment_group || "").toLowerCase().includes("test") &&
+      !String(row.assignment_group || "").toLowerCase().includes("study guide")
+    ) {
       title += row.lesson_num % 2 === 0 ? " Evens" : " Odds";
     }
 
@@ -205,7 +212,7 @@ class CanvasDeployer {
     }
 
     // LA Jingles link
-    if (subject === "LA") {
+    if (subject === "LA" || subject === "Language Arts") {
       description += `<p><a href="https://youtube.com/playlist?list=PLKTUEjoI9EhsLRrAQwC9hOp9MJMcXOG54" target="_blank">\uD83C\uDFB5 LA Jingles Playlist</a></p>`;
     }
 
@@ -378,15 +385,64 @@ ${dailyBlocks}
     for (const row of rows) {
       if (!row.create_assign) continue;
       try {
-        const objId = await this.createAssignment(row.subject, row);
-        const key = `${row.subject}_${row.lesson_num}`;
-        assignmentUrls[key] = `${this.courseUrl(row.subject)}/assignments/${objId}`;
-        results.push({
-          success: true,
-          objectId: objId,
-          subject: row.subject,
-          type: "assignment",
-        });
+        const rowType = String(row.type || "").toLowerCase();
+        const isMathTest = row.subject === "Math" && rowType.includes("test");
+
+        const variants: Array<{ keySuffix: string; payload: PacingRow; resultType: string }> = isMathTest
+          ? [
+              {
+                keySuffix: "written_test",
+                payload: {
+                  ...row,
+                  assignment_title: `Math Lesson ${row.lesson_num ?? ""} Written Test`.trim(),
+                  assignment_group: "Math Tests",
+                  points: 100,
+                  grading_type: "points",
+                  lesson_num: null,
+                },
+                resultType: "assignment_written_test",
+              },
+              {
+                keySuffix: "fact_test",
+                payload: {
+                  ...row,
+                  assignment_title: `Math Fact Test ${row.lesson_num ?? ""}`.trim(),
+                  assignment_group: "Math Fact Test",
+                  points: 100,
+                  grading_type: "points",
+                  lesson_num: null,
+                },
+                resultType: "assignment_fact_test",
+              },
+              {
+                keySuffix: "study_guide",
+                payload: {
+                  ...row,
+                  assignment_title: `Math Study Guide ${row.lesson_num ?? ""}`.trim(),
+                  assignment_group: "Math Study Guide",
+                  points: 0,
+                  grading_type: "pass_fail",
+                  lesson_num: null,
+                },
+                resultType: "assignment_study_guide",
+              },
+            ]
+          : [{ keySuffix: "default", payload: row, resultType: "assignment" }];
+
+        for (const variant of variants) {
+          const objId = await this.createAssignment(variant.payload.subject, variant.payload);
+          const url = `${this.courseUrl(variant.payload.subject)}/assignments/${objId}`;
+          const key = `${row.subject}_${row.lesson_num}_${row.type || "assignment"}_${variant.keySuffix}`;
+          assignmentUrls[key] = url;
+          const legacyKey = `${row.subject}_${row.lesson_num}`;
+          if (!assignmentUrls[legacyKey]) assignmentUrls[legacyKey] = url;
+          results.push({
+            success: true,
+            objectId: objId,
+            subject: row.subject,
+            type: variant.resultType,
+          });
+        }
       } catch (e) {
         results.push({
           success: false,
