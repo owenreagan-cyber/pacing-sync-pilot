@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,9 +6,34 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Sparkles, RefreshCw, FileText, CheckCircle2, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import {
+  Sparkles,
+  RefreshCw,
+  FileText,
+  CheckCircle2,
+  ExternalLink,
+  Inbox,
+  Loader2,
+  Layers,
+  Trash2,
+  FolderX,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  BATCH_MODE_THRESHOLD,
+  BATCH_CLASSIFY_JOB_NAME,
+  PAGE_SIZE,
+  formatBatchProgress,
+  parseBatchProgress,
+  paginate,
+  totalPages,
+  type BatchJobProgress,
+} from '@/lib/file-utils';
 
 interface OrphanFile {
   canvas_file_id: string;
@@ -21,6 +46,11 @@ interface OrphanFile {
   status: string;
   created_at: string;
   updated_at: string;
+  // New columns (Task 2)
+  file_hash: string | null;
+  is_duplicate: boolean;
+  canonical_file_id: string | null;
+  batch_job_id: string | null;
 }
 
 export default function FileOrganizerPage() {
@@ -34,9 +64,29 @@ export default function FileOrganizerPage() {
   const [editName, setEditName] = useState('');
   const [editLessonRef, setEditLessonRef] = useState('');
 
-  const selected = files.find((f) => f.canvas_file_id === selectedId) ?? null;
+  // Task 1: Batch processing state
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<BatchJobProgress | null>(null);
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadFiles = async () => {
+  // Task 2: Duplicate detection state
+  const [detectingDuplicates, setDetectingDuplicates] = useState(false);
+  const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+
+  // Task 3: Folder cleanup state
+  const [cleaningFolders, setCleaningFolders] = useState(false);
+
+  // Task 4: Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const selected = files.find((f) => f.canvas_file_id === selectedId) ?? null;
+  const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
+  const visibleFiles = isBatchMode
+    ? paginate(files, currentPage, PAGE_SIZE)
+    : files;
+  const numPages = isBatchMode ? totalPages(files.length, PAGE_SIZE) : 1;
+
+  const loadFiles = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('canvas_orphan_files')
@@ -47,13 +97,60 @@ export default function FileOrganizerPage() {
       toast.error('Failed to load files', { description: error.message });
     } else {
       setFiles((data ?? []) as OrphanFile[]);
+      setCurrentPage(1);
     }
     setLoading(false);
-  };
+  }, []);
+
+  // Load batch progress on mount (for resume on reload)
+  const loadBatchProgress = useCallback(async () => {
+    const { data: job } = await supabase
+      .from('automation_jobs')
+      .select('*')
+      .eq('job_name', BATCH_CLASSIFY_JOB_NAME)
+      .maybeSingle();
+    if (job) {
+      const progress = parseBatchProgress(job);
+      setBatchProgress(progress);
+      if (progress.status === 'running') {
+        setBatchRunning(true);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     loadFiles();
-  }, []);
+    loadBatchProgress();
+  }, [loadFiles, loadBatchProgress]);
+
+  // Poll for batch progress while running
+  useEffect(() => {
+    if (!batchRunning) {
+      if (batchPollRef.current) {
+        clearInterval(batchPollRef.current);
+        batchPollRef.current = null;
+      }
+      return;
+    }
+    batchPollRef.current = setInterval(async () => {
+      const { data: job } = await supabase
+        .from('automation_jobs')
+        .select('*')
+        .eq('job_name', BATCH_CLASSIFY_JOB_NAME)
+        .maybeSingle();
+      if (job) {
+        const progress = parseBatchProgress(job);
+        setBatchProgress(progress);
+        if (progress.status !== 'running') {
+          setBatchRunning(false);
+          await loadFiles();
+        }
+      }
+    }, 3000);
+    return () => {
+      if (batchPollRef.current) clearInterval(batchPollRef.current);
+    };
+  }, [batchRunning, loadFiles]);
 
   // Sync editable fields when selection changes
   useEffect(() => {
@@ -66,6 +163,7 @@ export default function FileOrganizerPage() {
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Task 1: Analyze single file
   const handleAnalyze = async () => {
     if (!selected) return;
     setAnalyzing(true);
@@ -80,7 +178,6 @@ export default function FileOrganizerPage() {
       const lessonRef = (data as any)?.ai_lesson_ref ?? '';
       setEditName(suggested);
       setEditLessonRef(lessonRef);
-      // Update local cache so list reflects new AI fields
       setFiles((prev) =>
         prev.map((f) =>
           f.canvas_file_id === selected.canvas_file_id
@@ -96,6 +193,41 @@ export default function FileOrganizerPage() {
     }
   };
 
+  // Task 1: Start / continue batch analysis
+  const handleBatchAnalyze = async () => {
+    setBatchRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('canvas-batch-classify', {
+        body: { batchSize: 25 },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const result = data as any;
+      setBatchProgress({
+        filesProcessed: result.filesProcessed ?? 0,
+        filesTotal: result.filesTotal ?? 0,
+        cursor: result.cursor ?? null,
+        status: result.done ? 'success' : 'running',
+      });
+
+      if (result.done) {
+        setBatchRunning(false);
+        toast.success('Batch analysis complete', {
+          description: `All ${result.filesTotal} files analyzed`,
+        });
+        await loadFiles();
+      } else {
+        toast.info('Batch in progress', {
+          description: `${result.processed} files processed in this batch`,
+        });
+      }
+    } catch (e: any) {
+      setBatchRunning(false);
+      toast.error('Batch analysis failed', { description: e?.message ?? String(e) });
+    }
+  };
+
   const handleApprove = async () => {
     if (!selected) return;
     if (!editName.trim()) {
@@ -104,7 +236,6 @@ export default function FileOrganizerPage() {
     }
     setApproving(true);
     try {
-      // Persist any teacher edits to the orphan row before rename
       const { error: updErr } = await supabase
         .from('canvas_orphan_files')
         .update({
@@ -120,7 +251,6 @@ export default function FileOrganizerPage() {
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
 
-      // Remove from local state
       setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
       toast.success('Approved & renamed', { description: editName });
@@ -130,6 +260,82 @@ export default function FileOrganizerPage() {
       setApproving(false);
     }
   };
+
+  // Task 2: Detect duplicates
+  const handleDetectDuplicates = async () => {
+    setDetectingDuplicates(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('canvas-detect-duplicates', {
+        body: { deleteDuplicates: false },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const result = data as any;
+      toast.success(`Found ${result.duplicatesFound} duplicate(s)`, {
+        description: 'Duplicate files are now highlighted in red.',
+      });
+      await loadFiles();
+    } catch (e: any) {
+      toast.error('Duplicate detection failed', { description: e?.message ?? String(e) });
+    } finally {
+      setDetectingDuplicates(false);
+    }
+  };
+
+  // Task 2: Delete duplicates
+  const handleDeleteDuplicates = async () => {
+    const dupCount = files.filter((f) => f.is_duplicate).length;
+    if (dupCount === 0) {
+      toast.info('No duplicates to delete. Run detection first.');
+      return;
+    }
+    setDeletingDuplicates(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('canvas-detect-duplicates', {
+        body: { deleteDuplicates: true },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const result = data as any;
+      toast.success(`Deleted ${result.duplicatesDeleted} duplicate(s)`, {
+        description: 'Canonical versions have been preserved.',
+      });
+      await loadFiles();
+    } catch (e: any) {
+      toast.error('Delete duplicates failed', { description: e?.message ?? String(e) });
+    } finally {
+      setDeletingDuplicates(false);
+    }
+  };
+
+  // Task 3: Clean empty folders
+  const handleCleanFolders = async () => {
+    setCleaningFolders(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('canvas-cleanup-folders', {
+        body: { dryRun: false },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const result = data as any;
+      toast.success(`Cleaned ${result.summary?.foldersDeleted ?? 0} empty folder(s)`, {
+        description: `Scanned ${result.summary?.coursesScanned ?? 0} course(s)`,
+      });
+    } catch (e: any) {
+      toast.error('Folder cleanup failed', { description: e?.message ?? String(e) });
+    } finally {
+      setCleaningFolders(false);
+    }
+  };
+
+  const duplicateCount = files.filter((f) => f.is_duplicate).length;
+  const progressPct =
+    batchProgress && batchProgress.filesTotal > 0
+      ? Math.round((batchProgress.filesProcessed / batchProgress.filesTotal) * 100)
+      : 0;
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
@@ -141,15 +347,115 @@ export default function FileOrganizerPage() {
             Triage inbox for unclassified Canvas files
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="gap-1.5">
             <Inbox className="h-3 w-3" />
             {files.length} pending
           </Badge>
+          {duplicateCount > 0 && (
+            <Badge variant="destructive" className="gap-1.5">
+              <AlertTriangle className="h-3 w-3" />
+              {duplicateCount} duplicate{duplicateCount !== 1 ? 's' : ''}
+            </Badge>
+          )}
           <Button variant="outline" size="sm" onClick={loadFiles} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>
         </div>
+      </div>
+
+      {/* Task 1: Batch Mode Banner */}
+      {isBatchMode && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-primary" />
+                  Batch Mode Available
+                  {batchProgress && (
+                    <span className="text-xs text-muted-foreground font-normal">
+                      — {formatBatchProgress(batchProgress)}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {files.length} files detected. Batch analysis processes 25 files at a time and
+                  resumes on page reload.
+                </p>
+                {batchProgress && batchProgress.filesTotal > 0 && (
+                  <div className="pt-1 space-y-1">
+                    <Progress value={progressPct} className="h-2 w-full max-w-sm" />
+                    <p className="text-[11px] text-muted-foreground">
+                      {batchProgress.filesProcessed} of {batchProgress.filesTotal} files processed
+                    </p>
+                  </div>
+                )}
+              </div>
+              <Button
+                size="sm"
+                onClick={handleBatchAnalyze}
+                disabled={batchRunning}
+                className="gap-1.5"
+              >
+                {batchRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" />
+                )}
+                {batchRunning ? 'Analyzing…' : batchProgress?.status === 'running' ? 'Resume Batch' : 'Start Batch Analysis'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Task 2 & 3: Bulk Action Toolbar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDetectDuplicates}
+          disabled={detectingDuplicates}
+          className="gap-1.5"
+        >
+          {detectingDuplicates ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <AlertTriangle className="h-3.5 w-3.5" />
+          )}
+          Detect Duplicates
+        </Button>
+        {duplicateCount > 0 && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDeleteDuplicates}
+            disabled={deletingDuplicates}
+            className="gap-1.5"
+          >
+            {deletingDuplicates ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            Delete Duplicates ({duplicateCount})
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCleanFolders}
+          disabled={cleaningFolders}
+          className="gap-1.5"
+        >
+          {cleaningFolders ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FolderX className="h-3.5 w-3.5" />
+          )}
+          Clean Folders
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4">
@@ -171,7 +477,13 @@ export default function FileOrganizerPage() {
                 </div>
               ) : (
                 <div className="p-2 space-y-1.5">
-                  {files.map((f) => {
+                  {/* Task 4: Batch mode label */}
+                  {isBatchMode && (
+                    <div className="px-1 pb-1 text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                      Page {currentPage} of {numPages} — showing {visibleFiles.length} of {files.length} files
+                    </div>
+                  )}
+                  {visibleFiles.map((f) => {
                     const isActive = f.canvas_file_id === selectedId;
                     return (
                       <button
@@ -180,7 +492,9 @@ export default function FileOrganizerPage() {
                         className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
                           isActive
                             ? 'border-primary bg-primary/10'
-                            : 'border-border hover:bg-muted/60'
+                            : f.is_duplicate
+                              ? 'border-destructive/60 bg-destructive/5 hover:bg-destructive/10'
+                              : 'border-border hover:bg-muted/60'
                         }`}
                       >
                         <div className="flex items-start gap-2">
@@ -189,8 +503,12 @@ export default function FileOrganizerPage() {
                             <div className="text-xs font-medium truncate">
                               {f.original_name || f.canvas_file_id}
                             </div>
-                            <div className="flex items-center gap-1.5 mt-1">
-                              {f.ai_suggested_name ? (
+                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                              {f.is_duplicate ? (
+                                <Badge variant="destructive" className="text-[9px]">
+                                  Duplicate
+                                </Badge>
+                              ) : f.ai_suggested_name ? (
                                 <Badge className="text-[9px] bg-primary/20 text-primary border-primary/30">
                                   AI ready
                                 </Badge>
@@ -210,6 +528,32 @@ export default function FileOrganizerPage() {
                       </button>
                     );
                   })}
+                  {/* Task 4: Pagination controls */}
+                  {isBatchMode && numPages > 1 && (
+                    <div className="flex items-center justify-between pt-2 px-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={currentPage <= 1}
+                        className="gap-1 h-7 text-xs"
+                      >
+                        <ChevronLeft className="h-3 w-3" /> Prev
+                      </Button>
+                      <span className="text-[10px] text-muted-foreground">
+                        {currentPage} / {numPages}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                        disabled={currentPage >= numPages}
+                        className="gap-1 h-7 text-xs"
+                      >
+                        Next <ChevronRight className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </ScrollArea>
@@ -259,6 +603,22 @@ export default function FileOrganizerPage() {
                   {selected.ai_suggested_folder && (
                     <Badge className="text-[10px] bg-primary/15 text-primary border-primary/30">
                       {selected.ai_suggested_folder}
+                    </Badge>
+                  )}
+                  {selected.is_duplicate && (
+                    <Badge variant="destructive" className="text-[10px] gap-1">
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                      Duplicate
+                      {selected.canonical_file_id && (
+                        <span className="ml-1 opacity-80">
+                          (original: {selected.canonical_file_id.slice(0, 8)}…)
+                        </span>
+                      )}
+                    </Badge>
+                  )}
+                  {selected.file_hash && (
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      SHA: {selected.file_hash.slice(0, 12)}…
                     </Badge>
                   )}
                 </div>
