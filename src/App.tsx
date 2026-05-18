@@ -25,6 +25,7 @@ import AutomationPage from '@/pages/AutomationPage';
 import CanvasBrainPage from '@/pages/CanvasBrainPage';
 import CanvasAuditorPage from '@/pages/CanvasAuditorPage';
 import WeekVerifierPage from '@/pages/WeekVerifierPage';
+import MasterPacingPage from '@/pages/MasterPacingPage';
 import NotFound from '@/pages/NotFound';
 
 const queryClient = new QueryClient();
@@ -178,6 +179,7 @@ function AppContent({ config }: { config: AppConfig }) {
             }
           />
           <Route path="/pacing-viewer" element={<PacingViewerPage />} />
+          <Route path="/master-pacing" element={<MasterPacingPage />} />
           <Route path="/pages" element={<PageBuilderPage />} />
           <Route path="/assignments" element={<AssignmentsPage />} />
           <Route path="/announcements" element={<AnnouncementCenterPage />} />
