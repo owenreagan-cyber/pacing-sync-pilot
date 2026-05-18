@@ -5,8 +5,48 @@ import { runWithRetry } from '../_shared/retry.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const JOB_NAME = 'automation-friday-deploy';
+const COURSE_IDS: Record<string, number> = {
+  Math: 21957,
+  Reading: 21919,
+  Spelling: 21919,
+  LA: 21944,
+  'Language Arts': 21944,
+  History: 21934,
+  Science: 21970,
+  Homeroom: 22254,
+};
 
 const QUARTER_ORDER = ['Q1', 'Q2', 'Q3', 'Q4'];
+
+interface PacingRowRecord {
+  id: string;
+  week_id: string;
+  subject: string;
+  day: string;
+  date: string;
+  type: string | null;
+  lesson_num: number | null;
+  lesson_title: string | null;
+  in_class: string | null;
+  create_assign: boolean;
+  assignment_title: string | null;
+  assignment_group: string | null;
+  points: number | null;
+  grading_type: string | null;
+}
+
+function buildTitle(row: PacingRowRecord): string {
+  if (row.assignment_title?.trim()) return row.assignment_title.trim();
+  const lessonLabel = row.lesson_num ?? row.lesson_title ?? '';
+  return `${row.subject} ${lessonLabel}`.trim();
+}
+
+function previousSchoolDueDate(row: PacingRowRecord): string {
+  if (row.day === 'Monday') return row.date;
+  const d = new Date(`${row.date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 function getNextWeek(weeks: { id: string; quarter: string; week_num: number }[], currentId?: string) {
   const sorted = [...weeks].sort((a, b) => {
@@ -69,7 +109,8 @@ Deno.serve(async (req) => {
       .eq('week_id', nextWeek.id);
     if (rErr) throw rErr;
 
-    const subjects = Array.from(new Set((rows ?? []).map((r) => r.subject)));
+    const pacingRows = (rows ?? []) as PacingRowRecord[];
+    const subjects = Array.from(new Set(pacingRows.map((r) => r.subject)));
     const log: Record<string, unknown> = { weekId: nextWeek.id, subjects: {} };
 
     for (const subject of subjects) {
@@ -79,13 +120,98 @@ Deno.serve(async (req) => {
         subjectLog.page = await invokeFn('canvas-deploy-page', { weekId: nextWeek.id, subject });
 
         // deploy assignments
-        const subjectRows = (rows ?? []).filter((r) => r.subject === subject && r.create_assign);
+        const subjectRows = pacingRows.filter((r) => r.subject === subject && r.create_assign);
         for (const row of subjectRows) {
-          try {
-            const a = await invokeFn('canvas-deploy-assignment', { rowId: row.id });
-            (subjectLog.assignments as unknown[]).push({ rowId: row.id, ok: true, result: a });
-          } catch (e) {
-            (subjectLog.assignments as unknown[]).push({ rowId: row.id, ok: false, error: String(e) });
+          const rowType = String(row.type || '').toLowerCase();
+          const isTest = rowType.includes('test');
+          const courseId = COURSE_IDS[row.subject];
+
+          if (!courseId) {
+            (subjectLog.assignments as unknown[]).push({ rowId: row.id, ok: false, error: `Unknown course for subject ${row.subject}` });
+            continue;
+          }
+
+          if (row.subject === 'History' || row.subject === 'Science') continue;
+          if (row.subject === 'Spelling' && !isTest) continue;
+          if (row.subject === 'Language Arts' || row.subject === 'LA') {
+            const upper = String(row.type || '').toUpperCase();
+            if (!upper.includes('CP') && !upper.includes('TEST') && !upper.includes('CLASSROOM PRACTICE')) continue;
+          }
+
+          const payloads: Array<Record<string, unknown>> = [];
+          const baseTitle = buildTitle(row);
+          const baseDescription = `<p>${row.in_class || baseTitle}</p>`;
+
+          if (row.subject === 'Math' && isTest) {
+            payloads.push({
+              rowId: row.id,
+              weekId: row.week_id,
+              subject: row.subject,
+              courseId,
+              title: `Math Lesson ${row.lesson_num ?? ''} Written Test`.trim(),
+              description: `<p>Math Lesson <strong>${row.lesson_num ?? ''}</strong> Written Test. Show all work.</p>`,
+              points: 100,
+              gradingType: 'points',
+              assignmentGroup: 'Written Assessments',
+              dueDate: row.date,
+              day: row.day,
+              type: 'Test',
+              isSynthetic: false,
+            });
+            payloads.push({
+              weekId: row.week_id,
+              subject: row.subject,
+              courseId,
+              title: `Math Fact Test ${row.lesson_num ?? ''}`.trim(),
+              description: `<p>Math Fact Test <strong>${row.lesson_num ?? ''}</strong>. Complete in class.</p>`,
+              points: 100,
+              gradingType: 'points',
+              assignmentGroup: 'Fact Assessments',
+              dueDate: row.date,
+              day: row.day,
+              type: 'Fact Test',
+              isSynthetic: true,
+            });
+            payloads.push({
+              weekId: row.week_id,
+              subject: row.subject,
+              courseId,
+              title: `Math Study Guide ${row.lesson_num ?? ''}`.trim(),
+              description: `<p>Study Guide for Lesson <strong>${row.lesson_num ?? ''}</strong>. Bring to class.</p>`,
+              points: 0,
+              gradingType: 'pass_fail',
+              assignmentGroup: 'Homework/Class Work',
+              dueDate: previousSchoolDueDate(row),
+              day: row.day,
+              type: 'Study Guide',
+              isSynthetic: true,
+              omitFromFinal: true,
+            });
+          } else {
+            payloads.push({
+              rowId: row.id,
+              weekId: row.week_id,
+              subject: row.subject,
+              courseId,
+              title: baseTitle,
+              description: baseDescription,
+              points: row.points ?? undefined,
+              gradingType: row.grading_type ?? undefined,
+              assignmentGroup: row.assignment_group ?? undefined,
+              dueDate: row.date,
+              day: row.day,
+              type: row.type ?? undefined,
+              isSynthetic: false,
+            });
+          }
+
+          for (const payload of payloads) {
+            try {
+              const a = await invokeFn('canvas-deploy-assignment', payload);
+              (subjectLog.assignments as unknown[]).push({ rowId: row.id, ok: true, result: a, title: String(payload.title || '') });
+            } catch (e) {
+              (subjectLog.assignments as unknown[]).push({ rowId: row.id, ok: false, error: String(e), title: String(payload.title || '') });
+            }
           }
         }
 
@@ -180,8 +306,9 @@ Deno.serve(async (req) => {
       if (RESEND_API_KEY) {
         const succeeded: string[] = [];
         const failed: { subject: string; error: string }[] = [];
-        for (const [subj, info] of Object.entries(log.subjects as Record<string, any>)) {
-          if (info?.error) failed.push({ subject: subj, error: String(info.error) });
+        for (const [subj, info] of Object.entries(log.subjects as Record<string, unknown>)) {
+          const infoRecord = (info && typeof info === 'object') ? (info as Record<string, unknown>) : null;
+          if (infoRecord?.error) failed.push({ subject: subj, error: String(infoRecord.error) });
           else succeeded.push(subj);
         }
 
