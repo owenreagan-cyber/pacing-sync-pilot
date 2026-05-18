@@ -25,7 +25,7 @@ const DAY_BLOCK_IDS: Record<string, string> = {
   Tuesday:   'kl_custom_block_4',
   Wednesday: 'kl_custom_block_6',
   Thursday:  'kl_custom_block_2',
-  Friday:    'kl_custom_block_7',
+  Friday:    'kl_custom_block_1',
 };
 
 const DAYS_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
@@ -168,36 +168,34 @@ export function generateRedirectPageHtml(params: RedirectPageParams): string {
     <h2 ${KL_BANNER_H2}><span ${KL_BANNER_SPAN}>${thisSubject} — Weekly Agenda</span></h2>
     <p ${KL_SUBTITLE}>${quarter}, Week ${weekNum} | ${dateRange}</p>
   </div>
+  <div id="kl_custom_block_0" class="">
+    ${params.reminderOverride
+      ? `<p>${params.reminderOverride}</p>`
+      : `<p>We are currently in <strong>${activeSubject}</strong> this unit.</p>
+    <p>Please visit the <a href="${courseUrl}" target="_blank" rel="noopener">${activeSubject} Canvas course</a> for this week's agenda.</p>`}
+  </div>
+  <div id="kl_custom_block_5" class="">
+    <p>&nbsp;</p>
+  </div>
+  <div id="kl_custom_block_3" class="">
+    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Monday&nbsp;</h3>
+    <p><em>No Class</em></p>
+  </div>
+  <div id="kl_custom_block_4" class="">
+    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Tuesday&nbsp;</h3>
+    <p><em>No Class</em></p>
+  </div>
+  <div id="kl_custom_block_6" class="">
+    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Wednesday&nbsp;</h3>
+    <p><em>No Class</em></p>
+  </div>
+  <div id="kl_custom_block_2" class="">
+    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Thursday&nbsp;</h3>
+    <p><em>No Class</em></p>
+  </div>
   <div id="kl_custom_block_1" class="">
-    <div id="kl_custom_block_0" class="">
-      ${params.reminderOverride
-        ? `<p>${params.reminderOverride}</p>`
-        : `<p>We are currently in <strong>${activeSubject}</strong> this unit.</p>
-      <p>Please visit the <a href="${courseUrl}" target="_blank" rel="noopener">${activeSubject} Canvas course</a> for this week's agenda.</p>`}
-    </div>
-    <div id="kl_custom_block_5" class="">
-      <p>&nbsp;</p>
-    </div>
-    <div id="kl_custom_block_3" class="">
-      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Monday&nbsp;</h3>
-      <p><em>No Class</em></p>
-    </div>
-    <div id="kl_custom_block_4" class="">
-      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Tuesday&nbsp;</h3>
-      <p><em>No Class</em></p>
-    </div>
-    <div id="kl_custom_block_6" class="">
-      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Wednesday&nbsp;</h3>
-      <p><em>No Class</em></p>
-    </div>
-    <div id="kl_custom_block_2" class="">
-      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Thursday&nbsp;</h3>
-      <p><em>No Class</em></p>
-    </div>
-    <div id="kl_custom_block_7" class="">
-      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Friday&nbsp;</h3>
-      <p><em>No Class</em></p>
-    </div>
+    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}Friday&nbsp;</h3>
+    <p><em>No Class</em></p>
   </div>
 </div>`;
 }
@@ -224,15 +222,12 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
   parts.push(`  </div>`);
   parts.push(`  <div id="kl_custom_block_0" class="">`);
   parts.push(`    <h3 ${KL_REMINDERS_H3}>${KL_ICON_EXCLAIM}Reminders</h3>`);
-  parts.push(`  </div>`);
-  parts.push(`  <div id="kl_custom_block_1" class="">`);
-  parts.push(`    <div id="kl_custom_block_0" class="">`);
   if (subjectReminder && subjectReminder.trim()) {
     for (const line of subjectReminder.split('\n').map((l) => l.trim()).filter(Boolean)) {
-      parts.push(`      <p>${line}</p>`);
+      parts.push(`    <p>${line}</p>`);
     }
   }
-  parts.push(`    </div>`);
+  parts.push(`  </div>`);
 
   const mergedResources: Resource[] = [...subjectResources];
   const seen = new Set(subjectResources.map((r) => `${r.group || ''}::${r.label}::${r.url || ''}`));
@@ -262,22 +257,22 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     }
   }
 
-  parts.push(`    <div id="kl_custom_block_5" class="">`);
+  parts.push(`  <div id="kl_custom_block_5" class="">`);
   if (mergedResources.length > 0) {
-    parts.push(`      <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
+    parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
     let currentGroup: string | undefined = undefined;
     for (const r of mergedResources) {
       if (r.group && r.group !== currentGroup) {
         currentGroup = r.group;
-        parts.push(`      <p><strong>${r.group}:</strong></p>`);
+        parts.push(`    <p><strong>${r.group}:</strong></p>`);
       }
       parts.push(renderResource(r));
     }
-    parts.push(`      <p>&nbsp;</p>`);
+    parts.push(`    <p>&nbsp;</p>`);
   } else {
-    parts.push(`      <p>&nbsp;</p>`);
+    parts.push(`    <p>&nbsp;</p>`);
   }
-  parts.push(`    </div>`);
+  parts.push(`  </div>`);
 
   for (let di = 0; di < DAYS_ORDER.length; di++) {
     const day = DAYS_ORDER[di];
@@ -288,8 +283,8 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     const isFriday = day === 'Friday';
     const row = dayRows[0];
 
-    parts.push(`    <div id="${blockId}" class="">`);
-    parts.push(`      <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}${day}&nbsp;</h3>`);
+    parts.push(`  <div id="${blockId}" class="">`);
+    parts.push(`    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}${day}&nbsp;</h3>`);
 
     const explicitNoClass =
       row.type === 'X' || row.type === 'No Class' || row.type === '-' ||
@@ -298,31 +293,31 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 
     if (explicitNoClass && !calLabel) {
       const label = row.type === 'X' ? 'No School' : 'No Class';
-      parts.push(`      <p><em>${label}</em></p>`);
-      parts.push(`    </div>`);
+      parts.push(`    <p><em>${label}</em></p>`);
+      parts.push(`  </div>`);
       continue;
     }
 
     if (calLabel && (!row.in_class || row.in_class.trim() === '')) {
-      parts.push(`      <p><em>${calLabel}</em></p>`);
-      parts.push(`    </div>`);
+      parts.push(`    <p><em>${calLabel}</em></p>`);
+      parts.push(`  </div>`);
       continue;
     }
 
-    parts.push(`      <h4 ${KL_H4}><strong>In Class</strong></h4>`);
+    parts.push(`    <h4 ${KL_H4}><strong>In Class</strong></h4>`);
     for (const r of dayRows) {
       const raw = (r.in_class || '').trim();
       if (!raw) continue;
       let txt = stripLessonTitle(raw, r.subject);
       txt = injectFileLinks(txt, contentMap, r.subject);
       if (r.canvas_url) {
-        txt = `<a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
+        txt = `<a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-[...]
       } else {
         txt = `<span>${txt}</span>`;
       }
-      parts.push(`      <p>${txt}</p>`);
+      parts.push(`    <p>${txt}</p>`);
     }
-    parts.push(`      <p>&nbsp;</p>`);
+    parts.push(`    <p>&nbsp;</p>`);
 
     if (!isFriday) {
       const atHomeFragments: string[] = [];
@@ -333,21 +328,20 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         txt = injectFileLinks(txt, contentMap, r.subject);
         if (r.canvas_url && r.subject === 'Math') {
           atHomeFragments.push(
-            `      <p><a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`,
+            `    <p><a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" da[...]
           );
         } else {
-          atHomeFragments.push(`      <p>${txt}</p>`);
+          atHomeFragments.push(`    <p>${txt}</p>`);
         }
       }
       if (atHomeFragments.length > 0) {
-        parts.push(`      <h4 ${KL_H4}><strong>${atHomeLabel(row.subject)}</strong></h4>`);
+        parts.push(`    <h4 ${KL_H4}><strong>${atHomeLabel(row.subject)}</strong></h4>`);
         parts.push(atHomeFragments.join('\n'));
-        parts.push(`      <p>&nbsp;</p>`);
+        parts.push(`    <p>&nbsp;</p>`);
       }
     }
-    parts.push(`    </div>`);
+    parts.push(`  </div>`);
   }
-  parts.push(`  </div>`);
   parts.push(`</div>`);
   return parts.join('\n');
 }
