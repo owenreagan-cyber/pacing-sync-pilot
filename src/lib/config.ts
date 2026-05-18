@@ -46,7 +46,7 @@ export async function loadConfig(): Promise<AppConfig> {
     console.warn('system_config row missing — using built-in defaults');
     return {
       courseIds: { Math: 21957, Reading: 21919, Spelling: 21919, 'Language Arts': 21944, History: 21934, Science: 21970, Homeroom: 22254 },
-      assignmentPrefixes: { Math: 'SM5', Reading: 'RM4', Spelling: 'SP', 'Language Arts': 'ELA4A', History: 'Hist', Science: 'Sci' },
+      assignmentPrefixes: { Math: 'SM5:', Reading: 'RM4:', Spelling: 'SP:', 'Language Arts': 'ELA4:', History: 'Hist:', Science: 'Sci:' },
       quarterColors: { Q1: '#00c0a5', Q2: '#0065a7', Q3: '#6644bb', Q4: '#c87800' },
       powerUpMap: {},
       spellingWordBank: {},
