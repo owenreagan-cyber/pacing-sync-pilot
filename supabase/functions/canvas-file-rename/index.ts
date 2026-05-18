@@ -1,5 +1,6 @@
 // Rename a Canvas file via PUT /api/v1/files/:id
 // Reads from canvas_orphan_files triage table and links to content_map on success.
+// Also creates missing Canvas folders on-demand when ai_suggested_folder is set.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -53,11 +54,65 @@ Deno.serve(async (req) => {
     if (error || !row) throw new Error("Orphan file row not found");
     if (!row.ai_suggested_name) throw new Error("No ai_suggested_name to rename to");
 
-    // 2. PUT to Canvas
+    // 2. If ai_suggested_folder is set, ensure the folder exists in Canvas (create if missing)
+    let targetFolderId: number | null = null;
+    if (row.ai_suggested_folder && row.course_id) {
+      try {
+        // Look up existing folders in the course
+        const foldersResp = await fetch(
+          `${baseUrl}/api/v1/courses/${row.course_id}/folders?per_page=100`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (foldersResp.ok) {
+          const folders = await foldersResp.json() as Array<{ id: number; name: string; full_name: string }>;
+          const match = folders.find(
+            (f) =>
+              f.name.toLowerCase() === row.ai_suggested_folder!.toLowerCase() ||
+              f.full_name.toLowerCase().endsWith(`/${row.ai_suggested_folder!.toLowerCase()}`),
+          );
+          if (match) {
+            targetFolderId = match.id;
+          } else {
+            // Create the folder
+            const createResp = await fetch(
+              `${baseUrl}/api/v1/courses/${row.course_id}/folders`,
+              {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ name: row.ai_suggested_folder, hidden: false }),
+              },
+            );
+            if (createResp.ok) {
+              const newFolder = await createResp.json() as { id: number };
+              targetFolderId = newFolder.id;
+              await supabase.from("deploy_log").insert({
+                action: "canvas-file-rename",
+                status: "ok",
+                message: `Created missing folder "${row.ai_suggested_folder}" in course ${row.course_id}`,
+                payload: { folderId: targetFolderId, folderName: row.ai_suggested_folder, courseId: row.course_id },
+              });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal: folder placement is best-effort
+      }
+    }
+
+    // Build file update payload
+    const filePayload: Record<string, unknown> = {
+      name: row.ai_suggested_name,
+      on_duplicate: "rename",
+    };
+    if (targetFolderId !== null) {
+      filePayload.parent_folder_id = targetFolderId;
+    }
+
+    // 3. PUT to Canvas
     const r = await fetch(`${baseUrl}/api/v1/files/${row.canvas_file_id}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: row.ai_suggested_name, on_duplicate: "rename" }),
+      body: JSON.stringify(filePayload),
     });
 
     const respText = await r.text();
@@ -79,7 +134,7 @@ Deno.serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    // 3. Mark orphan APPROVED
+    // 4. Mark orphan APPROVED
     await supabase
       .from("canvas_orphan_files")
       .update({
@@ -90,7 +145,7 @@ Deno.serve(async (req) => {
       })
       .eq("canvas_file_id", row.canvas_file_id);
 
-    // 4. Upsert into content_map so Pacing Entry UI sees it
+    // 5. Upsert into content_map so Pacing Entry UI sees it
     if (row.ai_lesson_ref) {
       const { data: cfg } = await supabase
         .from("system_config")
