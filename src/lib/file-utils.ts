@@ -56,3 +56,9 @@ export function paginate<T>(items: T[], page: number, pageSize: number): T[] {
 export function totalPages(itemCount: number, pageSize: number): number {
   return Math.max(1, Math.ceil(itemCount / pageSize));
 }
+
+/** Smart resume heuristic: already formatted names use spaces and no underscores */
+export function isAlreadyFormattedDisplayName(displayName: string | null | undefined): boolean {
+  const value = displayName ?? '';
+  return value.includes(' ') && !value.includes('_');
+}

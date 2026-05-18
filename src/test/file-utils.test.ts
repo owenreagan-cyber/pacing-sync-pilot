@@ -5,6 +5,7 @@ import {
   paginate,
   totalPages,
   groupByStatus,
+  isAlreadyFormattedDisplayName,
   BATCH_MODE_THRESHOLD,
   PAGE_SIZE,
   BATCH_SIZE,
@@ -103,6 +104,20 @@ describe('file-utils', () => {
       expect(BATCH_MODE_THRESHOLD).toBe(50);
       expect(PAGE_SIZE).toBe(10);
       expect(BATCH_SIZE).toBe(25);
+    });
+  });
+
+  describe('isAlreadyFormattedDisplayName', () => {
+    it('returns true when name has spaces and no underscores', () => {
+      expect(isAlreadyFormattedDisplayName('Saxon Math Lesson 66.pdf')).toBe(true);
+    });
+
+    it('returns false when name has underscores', () => {
+      expect(isAlreadyFormattedDisplayName('Saxon_Math_Lesson_66.pdf')).toBe(false);
+    });
+
+    it('returns false when name has no spaces', () => {
+      expect(isAlreadyFormattedDisplayName('SaxonMathLesson66.pdf')).toBe(false);
     });
   });
 });
