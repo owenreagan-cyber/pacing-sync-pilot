@@ -53,7 +53,7 @@ export function generateAssignmentTitle(
 
     case 'Language Arts':
       if (type === 'Test') return `${prefix} Shurley Test`;
-      if (type === 'CP' || type === 'Classroom Practice') return `${prefix} 4A - Shurley English Classroom Practice ${num}`;
+      if (type === 'CP' || type === 'Classroom Practice') return `${prefix} Shurley English Classroom Practice ${num}`;
       return `${prefix} English ${num}`;
 
     default:
@@ -252,4 +252,3 @@ export function buildAssignmentBatch(input: BuildAssignmentInput): CanvasAssignm
 
   return [primary];
 }
-
