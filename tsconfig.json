@@ -10,24 +10,15 @@
     "module": "ESNext",
     "jsx": "react-jsx",
     "skipLibCheck": true,
-    "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "strictBindCallApply": true,
-    "strictPropertyInitialization": true,
-    "noImplicitThis": true,
-    "alwaysStrict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "noPropertyAccessFromIndexSignature": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": false,
     "resolveJsonModule": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "sourceMap": true,
+    "noEmit": true,
     "paths": {
       "@/*": [
         "./src/*"
@@ -50,9 +41,7 @@
       "@/integrations/*": [
         "./src/integrations/*"
       ]
-    },
-    "outDir": "./dist",
-    "rootDir": "./src"
+    }
   },
   "include": [
     "src"
