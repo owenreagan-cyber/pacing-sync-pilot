@@ -8,6 +8,9 @@ import { ConfigContext, loadConfig, type AppConfig } from '@/lib/config';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useSystemStore } from '@/store/useSystemStore';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ErrorDiagnostics } from '@/components/ErrorDiagnostics';
+import { diagLog, diagError, clearDiagEntries, type InitStep } from '@/lib/diagnostics';
 
 import DashboardPage from '@/pages/DashboardPage';
 import PacingEntryPage from '@/pages/PacingEntryPage';
@@ -58,8 +61,10 @@ function AppContent({ config }: { config: AppConfig }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      diagLog('boot-week', 'Determining active week');
       const apply = (q: string, w: number) => {
         if (cancelled) return;
+        diagLog('boot-week-done', `Active week resolved: ${q} week ${w}`);
         setActiveQuarter(q);
         setActiveWeek(w);
         setBootLoading(false);
@@ -124,6 +129,7 @@ function AppContent({ config }: { config: AppConfig }) {
           }
         }
       } catch (e) {
+        diagError('boot-week', 'Initial week lookup failed, using fallback', e);
         console.warn('Initial week lookup failed, using fallback', e);
       }
       apply('Q4', 4);
@@ -203,30 +209,38 @@ function AppContent({ config }: { config: AppConfig }) {
 const App = () => {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [failedStep, setFailedStep] = useState<InitStep>('load-config');
+
+  const runLoadConfig = () => {
+    clearDiagEntries();
+    setError(null);
+    diagLog('start', 'App initialization started');
+    diagLog('load-config', 'Calling loadConfig()');
+    loadConfig()
+      .then((cfg) => {
+        diagLog('config-loaded', 'Config loaded successfully');
+        setConfig(cfg);
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        diagError('load-config', msg, e);
+        setFailedStep('load-config');
+        setError(msg);
+      });
+  };
 
   useEffect(() => {
-    loadConfig()
-      .then(setConfig)
-      .catch((e) => setError(e.message));
+    runLoadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center space-y-4">
-          <p className="text-destructive font-semibold">Failed to load config</p>
-          <p className="text-sm text-muted-foreground">{error}</p>
-          <button
-            onClick={() => {
-              setError(null);
-              loadConfig().then(setConfig).catch((e) => setError(e.message));
-            }}
-            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
+      <ErrorDiagnostics
+        failedStep={failedStep}
+        errorMessage={error}
+        onRetry={runLoadConfig}
+      />
     );
   }
 
@@ -239,15 +253,17 @@ const App = () => {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <ConfigContext.Provider value={config}>
-          <Toaster />
-          <Sonner />
-          <AppContent config={config} />
-        </ConfigContext.Provider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <ConfigContext.Provider value={config}>
+            <Toaster />
+            <Sonner />
+            <AppContent config={config} />
+          </ConfigContext.Provider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 };
 
