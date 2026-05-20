@@ -67,7 +67,7 @@ export default function MasterPacingPage() {
         .order('day');
 
       if (error) throw error;
-      setMasterRows((data as MasterRow[]) || []);
+      setMasterRows(((data as unknown) as MasterRow[]) || []);
     } catch (err: any) {
       toast.error('Failed to load master', { description: err.message });
     } finally {

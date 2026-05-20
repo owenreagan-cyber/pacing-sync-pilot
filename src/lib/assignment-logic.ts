@@ -71,7 +71,7 @@ export function generateAssignmentTitle(
 export interface AssignmentGroupInfo {
   groupName: string;
   points: number;
-  gradingType: string;
+  gradingType: 'points' | 'pass_fail';
   omitFromFinal: boolean;
 }
 
