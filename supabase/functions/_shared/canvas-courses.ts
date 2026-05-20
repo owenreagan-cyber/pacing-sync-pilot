@@ -7,6 +7,7 @@ const FALLBACK: Record<string, number> = {
   History: 21934,
   Science: 21970,
   Homeroom: 22254,
+  Spelling: 21919,
 };
 
 export async function getCourseIds(): Promise<Record<string, number>> {
