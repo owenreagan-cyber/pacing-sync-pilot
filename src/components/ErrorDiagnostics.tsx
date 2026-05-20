@@ -1,4 +1,10 @@
-import { checkEnvStatus, getDiagEntries, type DiagnosticEntry, type InitStep } from '@/lib/diagnostics';
+type InitStep =
+  | 'start'
+  | 'load-config'
+  | 'config-loaded'
+  | 'boot-week'
+  | 'boot-week-done'
+  | 'render';
 
 interface Props {
   failedStep: InitStep;
@@ -19,12 +25,9 @@ function stepLabel(step: InitStep): string {
 }
 
 export function ErrorDiagnostics({ failedStep, errorMessage, onRetry }: Props) {
-  const env = checkEnvStatus();
-  const entries = getDiagEntries();
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-8">
-      <div className="max-w-2xl w-full space-y-6">
+      <div className="max-w-2xl w-full space-y-4">
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 space-y-4">
           <h2 className="text-lg font-semibold text-destructive">Initialization Failed</h2>
 
@@ -45,35 +48,6 @@ export function ErrorDiagnostics({ failedStep, errorMessage, onRetry }: Props) {
             Retry
           </button>
         </div>
-
-        <div className="rounded-xl border p-4 space-y-3">
-          <h3 className="text-sm font-semibold">Environment Variables</h3>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <span className="text-muted-foreground">VITE_SUPABASE_URL</span>
-            <span className={env.supabaseUrl ? 'text-green-600' : 'text-destructive'}>
-              {env.supabaseUrl ? '✓ present' : '✗ missing'}
-            </span>
-            <span className="text-muted-foreground">VITE_SUPABASE_ANON_KEY</span>
-            <span className={env.supabaseKey ? 'text-green-600' : 'text-destructive'}>
-              {env.supabaseKey ? '✓ present' : '✗ missing'}
-            </span>
-          </div>
-        </div>
-
-        {entries.length > 0 && (
-          <div className="rounded-xl border p-4 space-y-2">
-            <h3 className="text-sm font-semibold">Initialization Log</h3>
-            <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-xs text-muted-foreground">
-              {entries.map((entry: DiagnosticEntry, i: number) => (
-                <div key={i} className="flex gap-2">
-                  <span className="shrink-0 text-foreground/40">{entry.timestamp.slice(11, 23)}</span>
-                  <span className="shrink-0 font-medium text-foreground/60">[{entry.step}]</span>
-                  <span>{entry.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

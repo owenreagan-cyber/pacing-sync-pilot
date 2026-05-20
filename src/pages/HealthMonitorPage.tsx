@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Activity, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Clock, Loader2, Wifi } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { runDiagnostics, overallStatus, type DiagnosticResult } from '@/lib/diagnostics';
 
 interface DeployLogEntry {
   id: string;
@@ -31,6 +32,17 @@ export default function HealthMonitorPage() {
   const [filter, setFilter] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [diagResults, setDiagResults] = useState<DiagnosticResult[]>([]);
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagRan, setDiagRan] = useState(false);
+
+  const handleRunDiagnostics = async () => {
+    setDiagRunning(true);
+    const results = await runDiagnostics();
+    setDiagResults(results);
+    setDiagRan(true);
+    setDiagRunning(false);
+  };
 
   const computeStats = (entries: DeployLogEntry[]) => ({
     total: entries.length,
@@ -52,6 +64,7 @@ export default function HealthMonitorPage() {
   };
 
   useEffect(() => { loadLogs(); }, [filter]);
+  useEffect(() => { handleRunDiagnostics(); }, []);
 
   // Realtime subscription with connection status
   useEffect(() => {
@@ -131,6 +144,61 @@ export default function HealthMonitorPage() {
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Activity className="h-4 w-4 text-primary" />
+              System Diagnostics
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {diagRan && (
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${
+                    overallStatus(diagResults) === 'pass'
+                      ? 'text-green-600 border-green-500'
+                      : overallStatus(diagResults) === 'warn'
+                      ? 'text-amber-600 border-amber-500'
+                      : 'text-destructive border-destructive'
+                  }`}
+                >
+                  {overallStatus(diagResults).toUpperCase()}
+                </Badge>
+              )}
+              <Button size="sm" variant="outline" onClick={handleRunDiagnostics}
+                disabled={diagRunning} className="h-7 text-xs gap-1">
+                {diagRunning
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <RefreshCw className="h-3 w-3" />}
+                {diagRunning ? 'Checking...' : 'Re-run'}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-1.5">
+          {diagRunning && !diagRan && (
+            <div className="flex items-center gap-2 py-4 justify-center">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">Running diagnostics...</span>
+            </div>
+          )}
+          {diagResults.map((r) => (
+            <div key={r.name} className="flex items-center gap-3 py-1.5 border-b border-border/40 last:border-0">
+              <div className={`h-2 w-2 rounded-full shrink-0 ${
+                r.status === 'pass' ? 'bg-green-500' :
+                r.status === 'warn' ? 'bg-amber-500' : 'bg-destructive'
+              }`} />
+              <span className="text-xs font-medium w-44 shrink-0">{r.name}</span>
+              <span className="text-xs text-muted-foreground flex-1">{r.message}</span>
+              {r.durationMs !== undefined && (
+                <span className="text-[10px] text-muted-foreground shrink-0">{r.durationMs}ms</span>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
