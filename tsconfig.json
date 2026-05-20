@@ -9,7 +9,6 @@
     ],
     "module": "ESNext",
     "skipLibCheck": true,
-    "/* STRICT TYPE CHECKING - ALL ENABLED */": "",
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -24,14 +23,10 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
-    "/* MODULE RESOLUTION */": "",
     "resolveJsonModule": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "declaration": true,
-    "declarationMap": true,
     "sourceMap": true,
-    "/* PATH MAPPING */": "",
     "paths": {
       "@/*": [
         "./src/*"
@@ -55,20 +50,10 @@
         "./src/integrations/*"
       ]
     },
-    "/* OUTPUT */": "",
     "outDir": "./dist",
-    "rootDir": "./src",
-    "composite": true
+    "rootDir": "./src"
   },
   "include": [
     "src"
-  ],
-  "references": [
-    {
-      "path": "./tsconfig.app.json"
-    },
-    {
-      "path": "./tsconfig.node.json"
-    }
   ]
 }
