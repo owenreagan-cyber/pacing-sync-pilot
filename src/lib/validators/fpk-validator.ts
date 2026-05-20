@@ -27,7 +27,17 @@ export function validateFpkPage(html: string, subject: string): ValidationResult
     issues.push({ severity: 'critical', code: 'CROSS_COURSE_LEAK',
       message: `Course ${id} found in ${subject} page (not authorized)` });
   }
-  if (html.replace(/<[^>]+>/g, '').replace(/&nbsp;|\s/g, '').length < 30)
+  const textContent = (() => {
+    if (typeof window !== 'undefined' && typeof window.DOMParser !== 'undefined') {
+      const doc = new window.DOMParser().parseFromString(html, 'text/html');
+      return doc.body.textContent || '';
+    }
+    return html.split('<').map((segment) => {
+      const close = segment.indexOf('>');
+      return close >= 0 ? segment.slice(close + 1) : segment;
+    }).join('');
+  })();
+  if (textContent.replace(/&nbsp;|\s/g, '').length < 30)
     issues.push({ severity: 'critical', code: 'EMPTY_PAGE', message: 'Page appears empty' });
   return { pass: issues.filter(i => i.severity === 'critical').length === 0, issues };
 }
