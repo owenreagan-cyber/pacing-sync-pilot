@@ -121,7 +121,7 @@ function atHomeLabel(subject: string): string {
 
 function renderResource(r: Resource & { url?: string | string[] }): string {
   const urls = Array.isArray(r.url) ? r.url.filter(Boolean) : (r.url ? [r.url] : []);
-  if (urls.length === 0) return `      <p><strong>${r.label}</strong></p>`;
+  if (urls.length === 0) return `    <p><strong>${r.label}</strong></p>`;
   return urls.map((rawUrl, index) => {
     const clean = rawUrl
       .replace(/\/download\?.*$/, '')
@@ -131,7 +131,7 @@ function renderResource(r: Resource & { url?: string | string[] }): string {
       '$1/api/v1/courses/$2/files/',
     );
     const title = urls.length > 1 ? `${r.label} ${index + 1}` : r.label;
-    return `      <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
+    return `    <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
       + `title="${title}" href="${clean}?wrap=1" target="_blank" rel="noopener" `
       + `data-api-endpoint="${apiEndpoint}" data-api-returntype="File">${title}</a></p>`;
   }).join('\n');
@@ -277,19 +277,23 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
   for (let di = 0; di < DAYS_ORDER.length; di++) {
     const day = DAYS_ORDER[di];
     const dayRows = rows.filter((r) => r.day === day);
-    if (dayRows.length === 0) continue;
-
     const blockId = DAY_BLOCK_IDS[day];
     const isFriday = day === 'Friday';
     const row = dayRows[0];
+    const calLabel = calendarDayLabel(di, weekDates, calendarEvents);
 
     parts.push(`  <div id="${blockId}" class="">`);
     parts.push(`    <h3 ${KL_DAY_H3}>${KL_ICON_SCHOOL}${day}&nbsp;</h3>`);
 
+    if (dayRows.length === 0) {
+      parts.push(`    <p><em>${calLabel ?? 'No Class'}</em></p>`);
+      parts.push(`  </div>`);
+      continue;
+    }
+
     const explicitNoClass =
       row.type === 'X' || row.type === 'No Class' || row.type === '-' ||
       ((row.in_class || '').trim() === '' && (row.type || '').trim() === '');
-    const calLabel = calendarDayLabel(di, weekDates, calendarEvents);
 
     if (explicitNoClass && !calLabel) {
       const label = row.type === 'X' ? 'No School' : 'No Class';

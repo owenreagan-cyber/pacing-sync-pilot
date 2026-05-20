@@ -10,7 +10,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useSystemStore } from '@/store/useSystemStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ErrorDiagnostics } from '@/components/ErrorDiagnostics';
-import { diagLog, diagError, clearDiagEntries, type InitStep } from '@/lib/diagnostics';
 
 import DashboardPage from '@/pages/DashboardPage';
 import PacingEntryPage from '@/pages/PacingEntryPage';
@@ -61,10 +60,8 @@ function AppContent({ config }: { config: AppConfig }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      diagLog('boot-week', 'Determining active week');
       const apply = (q: string, w: number) => {
         if (cancelled) return;
-        diagLog('boot-week-done', `Active week resolved: ${q} week ${w}`);
         setActiveQuarter(q);
         setActiveWeek(w);
         setBootLoading(false);
@@ -129,7 +126,6 @@ function AppContent({ config }: { config: AppConfig }) {
           }
         }
       } catch (e) {
-        diagError('boot-week', 'Initial week lookup failed, using fallback', e);
         console.warn('Initial week lookup failed, using fallback', e);
       }
       apply('Q4', 4);
@@ -209,22 +205,14 @@ function AppContent({ config }: { config: AppConfig }) {
 const App = () => {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [failedStep, setFailedStep] = useState<InitStep>('load-config');
+  const [failedStep] = useState<'load-config'>('load-config');
 
   const runLoadConfig = () => {
-    clearDiagEntries();
     setError(null);
-    diagLog('start', 'App initialization started');
-    diagLog('load-config', 'Calling loadConfig()');
     loadConfig()
-      .then((cfg) => {
-        diagLog('config-loaded', 'Config loaded successfully');
-        setConfig(cfg);
-      })
+      .then((cfg) => setConfig(cfg))
       .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
-        diagError('load-config', msg, e);
-        setFailedStep('load-config');
         setError(msg);
       });
   };
@@ -253,17 +241,17 @@ const App = () => {
   }
 
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <ConfigContext.Provider value={config}>
-            <Toaster />
-            <Sonner />
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <ConfigContext.Provider value={config}>
+          <Toaster />
+          <Sonner />
+          <ErrorBoundary>
             <AppContent config={config} />
-          </ConfigContext.Provider>
-        </TooltipProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
+          </ErrorBoundary>
+        </ConfigContext.Provider>
+      </TooltipProvider>
+    </QueryClientProvider>
   );
 };
 
