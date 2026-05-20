@@ -3,11 +3,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 const FALLBACK: Record<string, number> = {
   Math: 21957,
   Reading: 21919,
+  Spelling: 21919,
   'Language Arts': 21944,
   History: 21934,
   Science: 21970,
   Homeroom: 22254,
-  Spelling: 21919,
 };
 
 export async function getCourseIds(): Promise<Record<string, number>> {
