@@ -15,31 +15,44 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Rocket, Loader2, AlertCircle, ArrowRightLeft, ShieldCheck,
-  CheckCircle2, ChevronDown, Eye, SkipForward, FlaskConical,
+  CheckCircle2, ChevronDown, Eye, SkipForward, Zap, FlaskConical,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useSystemStore, type PacingCell } from '@/store/useSystemStore';
-import { useConfig } from '@/lib/config';
-import { callEdge } from '@/lib/edge';
 import { supabase } from '@/integrations/supabase/client';
-import SafetyDiffModal from '@/components/SafetyDiffModal';
+import { useConfig, type AppConfig } from '@/lib/config';
+import { callEdge } from '@/lib/edge';
 import { useRealtimeDeploy } from '@/hooks/use-realtime-deploy';
+import { useSystemStore } from '@/store/useSystemStore';
+import SafetyDiffModal from '@/components/SafetyDiffModal';
+import {
+  TOGETHER_LOGIC_COURSE_ID,
+  getCourseId,
+} from '@/lib/course-ids';
+import { logEdit, learnFromEdit, logDeployHabit } from '@/lib/teacher-memory';
 import {
   buildAssignmentForCell,
-  expandMathRow,
-  formatDueET,
   type BuiltAssignment,
 } from '@/lib/assignment-build';
-import { generateCanvasPageHtml, type CanvasPageRow } from '@/lib/canvas-html';
+import {
+  generateCanvasPageHtml,
+  type CanvasPageRow,
+} from '@/lib/canvas-html';
 import { runQ4W5Tests, type TestResult } from '@/lib/test-runner';
 import type { ContentMapEntry } from '@/lib/auto-link';
 import { logDeployHabit } from '@/lib/teacher-memory';
 import { validateDeployment, type ValidationResult } from '@/lib/pre-deploy-validator';
 import { getPacingWeekDatesISO } from '@/lib/pacing-week';
+import { isDryRunMode } from '@/lib/env/canvas-mode';
+import { AlertTriangle } from 'lucide-react';
 
 const SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'];
 const FILTER_CHIPS = ['All', 'Math', 'Reading', 'Language Arts', 'Spelling'];
@@ -47,27 +60,34 @@ const FILTER_CHIPS = ['All', 'Math', 'Reading', 'Language Arts', 'Spelling'];
 type DeployStatus = 'NEW' | 'UPDATE' | 'NO_CHANGE' | 'SKIP' | 'ERROR' | 'DEPLOYED';
 
 interface PreviewRow extends BuiltAssignment {
+  dayIndex: number;
+  rowKey: string;
   status: DeployStatus;
-  rowId: string | null;
-  canvasUrl: string | null;
-  storedHash: string | null;
+  isSynthetic?: boolean;
 }
 
 interface PacingDbRow {
-  id: string;
   subject: string;
   day: string;
   type: string | null;
   lesson_num: string | null;
+  canvas_assignment_id: number | null;
   content_hash: string | null;
-  canvas_assignment_id: string | null;
-  canvas_url: string | null;
+  created_at: string;
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 function computeWeekDates(quarter: string, week: number): string[] {
-  return getPacingWeekDatesISO(quarter, week);
+  const startDate = new Date(2026, 0, 1);
+  startDate.setDate(startDate.getDate() + (parseInt(quarter.slice(1)) - 1) * 13 * 7 + (week - 1) * 7);
+  const dates: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
 }
 
 export default function AssignmentsPage() {
@@ -112,29 +132,33 @@ export default function AssignmentsPage() {
     supabase
       .from('content_map')
       .select('lesson_ref, subject, canvas_url, canonical_name')
-      .then(({ data }) => { if (data) setContentMap(data as ContentMapEntry[]); });
+      .then(({ data }) => {
+        if (data) setContentMap(data as ContentMapEntry[]);
+      });
   }, []);
 
-  // Fetch pacing rows from DB (for hash comparison + canvas IDs)
+  // Fetch pacing_rows for selected quarter/week
   useEffect(() => {
-    (async () => {
-      const { data: week } = await supabase
-        .from('weeks')
-        .select('id')
-        .eq('quarter', selectedMonth)
-        .eq('week_num', selectedWeek)
-        .maybeSingle();
-      if (!week) { setWeekId(null); setPacingDbRows([]); return; }
-      setWeekId(week.id);
-      const { data: rows } = await supabase
-        .from('pacing_rows')
-        .select('id, subject, day, type, lesson_num, content_hash, canvas_assignment_id, canvas_url')
-        .eq('week_id', week.id);
-      setPacingDbRows((rows as PacingDbRow[]) || []);
-    })();
-  }, [selectedMonth, selectedWeek]);
+    if (!selectedMonth || !selectedWeek) return;
+    supabase
+      .from('weeks')
+      .select('id')
+      .eq('quarter', selectedMonth)
+      .eq('week_num', selectedWeek)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setWeekId(data?.id ?? null);
+        if (!data?.id) return;
+        supabase
+          .from('pacing_rows')
+          .select('subject, day, type, lesson_num, canvas_assignment_id, content_hash, created_at')
+          .eq('week_id', data.id)
+          .then(({ data: rows }) => {
+            setPacingDbRows((rows as any) || []);
+          });
+      });
 
-  useEffect(() => {
     setDeployResults({});
     setSelected(new Set());
   }, [selectedMonth, selectedWeek]);
@@ -157,31 +181,18 @@ export default function AssignmentsPage() {
 
   // Build preview rows whenever inputs change — sourced from Supabase pacing_rows
   useEffect(() => {
-    if (!config || !selectedMonth || !selectedWeek) { setPreviewRows([]); return; }
-
     (async () => {
+      if (!selectedMonth || !selectedWeek || !config) return;
+      const Q = selectedMonth;
+      const W = selectedWeek;
+      const weekDates = getPacingWeekDatesISO(Q, W);
+
+      const pacingRows = pacingDbRows;
+
       const built: PreviewRow[] = [];
 
-      const { data: weekRecord } = await supabase
-        .from('weeks')
-        .select('id')
-        .eq('quarter', selectedMonth)
-        .eq('week_num', selectedWeek)
-        .maybeSingle();
-
-      if (!weekRecord) { setPreviewRows([]); return; }
-
-      const weekDates = computeWeekDates(selectedMonth, selectedWeek);
-
-      const { data: pacingRows } = await supabase
-        .from('pacing_rows')
-        .select('*')
-        .eq('week_id', weekRecord.id);
-
-      if (!pacingRows?.length) { setPreviewRows([]); setHistoryRedirect(null); return; }
-
-      // History/Science redirect detection from pacing_rows
       const isDash = (t: string | null) => !t || t === '-' || t === 'No Class';
+
       const histRows = pacingRows.filter((r: any) => r.subject === 'History');
       const sciRows = pacingRows.filter((r: any) => r.subject === 'Science');
       const allHistDash = histRows.length === 0 || histRows.every((r: any) => isDash(r.type));
@@ -191,73 +202,67 @@ export default function AssignmentsPage() {
       else setHistoryRedirect(null);
 
       function toPreview(a: BuiltAssignment): PreviewRow {
-        const dbRow = findDbRow(a.subject, a.dayIndex, a.type, a.lessonNum);
-        let status: DeployStatus;
-        if (a.skipReason) status = 'SKIP';
-        else if (!dbRow?.canvas_assignment_id) status = 'NEW';
-        else if (dbRow.content_hash === a.contentHash) status = 'NO_CHANGE';
-        else status = 'UPDATE';
-        return {
-          ...a,
-          status,
-          rowId: dbRow?.id ?? null,
-          canvasUrl: dbRow?.canvas_url ?? null,
-          storedHash: dbRow?.content_hash ?? null,
-        };
+        const dayIndex = DAYS.indexOf(a.day);
+        const rowKey = `${a.subject}_${dayIndex}_${a.type}_${a.lesson_num}`;
+        const dbRow = findDbRow(a.subject, dayIndex, a.type, a.lesson_num);
+        let status: DeployStatus = 'NEW';
+        if (dbRow) {
+          const oldHash = dbRow.content_hash;
+          const newHash = JSON.stringify(a).substring(0, 40);
+          status = oldHash === newHash ? 'NO_CHANGE' : 'UPDATE';
+        }
+        return { ...a, dayIndex, rowKey, status };
       }
 
       for (const subject of SUBJECTS) {
         for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
           const day = DAYS[dayIdx];
-          const dayRows = pacingRows.filter((r: any) => r.subject === subject && r.day === day);
-          for (const row of dayRows) {
-            if (!row.type || row.type === '-' || row.type === 'No Class') continue;
-            if (!row.create_assign) continue;
+          const cell = { day, dayIndex: dayIdx, isTest: false };
 
-            const cell: PacingCell = {
-              value: row.in_class || row.lesson_num || '',
-              lessonNum: row.lesson_num || '',
-              isTest: (row.type || '').toLowerCase().includes('test'),
-              isReview: (row.in_class || '').toLowerCase().includes('review'),
-              isNoClass: row.type === '-' || row.type === 'No Class',
-              hint_override: (row as any).hint_override ?? null,
-            };
+          const row = pacingRows.find(
+            (r: any) => r.subject === subject && r.day === day,
+          );
+          if (!row) continue;
 
-            // Math Triple Logic
-            if (subject === 'Math') {
-              const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
-              for (const a of items) built.push(toPreview(a));
-              continue;
-            }
-
+          // Skip rows with dash-like types
+          if (isDash(row.type)) {
             // Reading Double-Split: Test + Checkout
-            if (subject === 'Reading' && cell.isTest) {
-              const test = await buildAssignmentForCell('Reading', dayIdx, cell,
+            if (subject === 'Reading' && row.lesson_num) {
+              const test = await buildAssignmentForCell('Reading', dayIdx, { ...cell, isTest: true },
                 { config, contentMap, weekDates }, { type: 'Test' });
               if (test) built.push(toPreview(test));
               const checkout = await buildAssignmentForCell('Reading', dayIdx, cell,
                 { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
               if (checkout) built.push(toPreview(checkout));
-              continue;
             }
-
-            // Spelling: only Tests create assignments
-            if (subject === 'Spelling' && !cell.isTest) continue;
-
-            // Language Arts: only CP / Classroom Practice / Test
-            if (subject === 'Language Arts') {
-              const upper = (row.type || '').toUpperCase();
-              if (!upper.includes('CP') && !upper.includes('TEST') &&
-                  !upper.includes('CLASSROOM PRACTICE')) continue;
-            }
-
-            // History / Science: never create assignments
-            if (subject === 'History' || subject === 'Science') continue;
-
-            const a = await buildAssignmentForCell(subject, dayIdx, cell,
-              { config, contentMap, weekDates });
-            if (a) built.push(toPreview(a));
+            continue;
           }
+
+          // Reading Double-Split: Test + Checkout
+          if (subject === 'Reading' && cell.isTest) {
+            const test = await buildAssignmentForCell('Reading', dayIdx, cell,
+              { config, contentMap, weekDates }, { type: 'Test' });
+            if (test) built.push(toPreview(test));
+            const checkout = await buildAssignmentForCell('Reading', dayIdx, cell,
+              { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
+            if (checkout) built.push(toPreview(checkout));
+            continue;
+          }
+
+          // Spelling: only Tests create assignments
+          if (subject === 'Spelling' && !cell.isTest) continue;
+
+          // Language Arts: only CP / Classroom Practice / Test
+          if (subject === 'Language Arts') {
+            const upper = (row.type || '').toUpperCase();
+            if (!upper.includes('CP') && !upper.includes('TEST') &&
+                !upper.includes('CLASSROOM PRACTICE')) continue;
+          }
+          if (subject === 'History' || subject === 'Science') continue;
+
+          const a = await buildAssignmentForCell(subject, dayIdx, cell,
+            { config, contentMap, weekDates });
+          if (a) built.push(toPreview(a));
         }
       }
 
@@ -276,260 +281,111 @@ export default function AssignmentsPage() {
     [filtered, forcedRows],
   );
 
-  const toggleSelect = (key: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const selectAllPending = () => {
-    setSelected(new Set(deployable.map((r) => r.rowKey)));
-  };
-
-  const toggleExpand = (key: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const handleDeploy = async () => {
-    setDeploying(true);
-    const targets = previewRows.filter((r) => selected.has(r.rowKey));
-    const results: Record<string, DeployStatus> = {};
-    let ok = 0, fail = 0, skip = 0;
-
-    for (const r of targets) {
-      try {
-        if (testMode) {
-          const fakeUrl = `https://canvas.test/courses/${r.courseId}/assignments/TEST_${Math.floor(Math.random() * 100000)}`;
-          console.log('[TEST DEPLOY]', r.title, '→', fakeUrl);
-          toast.message(`TEST DEPLOY: ${r.title}`, { description: fakeUrl });
-          results[r.rowKey] = 'DEPLOYED'; ok++;
-          continue;
-        }
-        const ov = editOverrides[r.rowKey] || {};
-        const res = await callEdge<{ status?: string; canvasUrl?: string; error?: string }>(
-          'canvas-deploy-assignment',
-          {
-            subject: r.subject,
-            courseId: r.courseId,
-            title: ov.title ?? r.title,
-            description: r.description,
-            points: ov.points ?? r.points,
-            gradingType: ov.gradingType ?? r.gradingType,
-            assignmentGroup: r.assignmentGroup,
-            dueDate: ov.dueDate ?? r.dueDate ?? undefined,
-            omitFromFinal: r.omitFromFinal,
-            existingId: r.canvasUrl ? r.canvasUrl.split('/').pop() : undefined,
-            rowId: r.rowId || undefined,
-            weekId: weekId || undefined,
-            contentHash: r.contentHash,
-            day: r.day,
-            type: r.type,
-            isSynthetic: r.isSynthetic,
-            force: forcedRows.has(r.rowKey) || undefined,
-          },
-        );
-        if (res.status === 'DEPLOYED') {
-          results[r.rowKey] = 'DEPLOYED'; ok++;
-          void logDeployHabit(r.subject);
-        }
-        else if (res.status === 'NO_CHANGE') { results[r.rowKey] = 'NO_CHANGE'; skip++; }
-        else { results[r.rowKey] = 'ERROR'; fail++; }
-      } catch {
-        results[r.rowKey] = 'ERROR'; fail++;
-      }
-    }
-
-    setDeployResults((prev) => ({ ...prev, ...results }));
-    if (fail === 0 && skip === 0) toast.success(`Deployed ${ok} assignments to Canvas`);
-    else if (fail === 0) toast.success(`Deployed ${ok}, skipped ${skip} unchanged`);
-    else toast.warning(`Deployed ${ok}, skipped ${skip}, failed ${fail}`);
-
-    // Post-deploy cleanup: History/Science must NEVER have assignments.
-    // If teacher (or a stale row) created any in those courses for this week,
-    // delete them automatically.
+  const formatDueET = (dueDate: string | undefined) => {
+    if (!dueDate) return '\u2014';
     try {
-      const weekDates: string[] = computeWeekDates(selectedMonth, selectedWeek);
-      if (weekDates.length > 0) {
-        await deleteRogueHistoryScienceAssignments(weekDates, weekId || null);
-      }
-    } catch (e) {
-      console.warn('Rogue cleanup failed', e);
-    }
-
-    setDeploying(false);
-    setSelected(new Set());
-    // Refresh DB rows to pick up new canvas_assignment_id + hashes
-    if (weekId) {
-      const { data: rows } = await supabase
-        .from('pacing_rows')
-        .select('id, subject, day, type, lesson_num, content_hash, canvas_assignment_id, canvas_url')
-        .eq('week_id', weekId);
-      setPacingDbRows((rows as PacingDbRow[]) || []);
+      const d = new Date(dueDate + 'T16:59:00Z');
+      return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+    } catch {
+      return dueDate;
     }
   };
 
-  /**
-   * Delete any assignments lingering in History (21934) or Science (21970)
-   * whose due_at falls inside the current week. Per Thales policy these
-   * subjects are page/announcement-only — no Canvas assignments allowed.
-   */
-  async function deleteRogueHistoryScienceAssignments(
-    weekDates: string[],
-    weekIdForLog: string | null,
-  ) {
-    const HIST_SCI_COURSES: Array<{ id: number; subject: 'History' | 'Science' }> = [
-      { id: 21934, subject: 'History' },
-      { id: 21970, subject: 'Science' },
-    ];
-    for (const { id: courseId, subject } of HIST_SCI_COURSES) {
-      const { data, error } = await supabase.functions.invoke('canvas-fetch', {
-        body: { action: 'list_assignments', courseId: String(courseId) },
+  const statusBadge = (liveStatus: DeployStatus) => {
+    if (liveStatus === 'NEW') return <Badge className="text-[10px] bg-blue-600">NEW</Badge>;
+    if (liveStatus === 'UPDATE') return <Badge className="text-[10px] bg-amber-600">UPDATE</Badge>;
+    if (liveStatus === 'NO_CHANGE') return <Badge variant="secondary" className="text-[10px]">UP-TO-DATE</Badge>;
+    if (liveStatus === 'SKIP') return <Badge variant="outline" className="text-[10px]">SKIP</Badge>;
+    if (liveStatus === 'ERROR') return <Badge variant="destructive" className="text-[10px]">ERROR</Badge>;
+    if (liveStatus === 'DEPLOYED') return <Badge className="text-[10px] bg-success text-success-foreground">DEPLOYED</Badge>;
+    return <Badge variant="outline" className="text-[10px]">{liveStatus}</Badge>;
+  };
+
+  const handleDeployAll = async () => {
+    if (deployable.length === 0) {
+      toast.error('No deployable assignments');
+      return;
+    }
+
+    if (testMode) {
+      console.log('[TEST MODE] Deploy:', deployable.map((r) => r.title));
+      setDeployResults(Object.fromEntries(deployable.map((r) => [r.rowKey, 'DEPLOYED'])));
+      toast.message(`TEST: ${deployable.length} assignments`, {
+        description: 'No Canvas API calls made',
       });
-      if (error) {
-        console.warn(`canvas-fetch list_assignments failed for ${subject}`, error);
+      return;
+    }
+
+    setDiffOpen(true);
+  };
+
+  const handleSafetyApprove = async () => {
+    setDeploying(true);
+    const results: Record<string, DeployStatus> = {};
+    let ok = 0, err = 0;
+
+    const toastId = toast.loading(`Deploying 0/${deployable.length} assignments\u2026`);
+
+    for (const r of deployable) {
+      toast.loading(`Deploying (${ok + 1}/${deployable.length}) ${r.title}\u2026`, { id: toastId });
+
+      if (testMode) {
+        const fakeUrl = `https://canvas.test/courses/${r.courseId}/assignments/TEST_${Math.floor(Math.random() * 100000)}`;
+        console.log('[TEST DEPLOY]', r.title, '→', fakeUrl);
+        toast.message(`TEST DEPLOY: ${r.title}`, { description: fakeUrl });
+        results[r.rowKey] = 'DEPLOYED'; ok++;
         continue;
       }
-      const assignments: Array<{ id: number | string; name: string; due_at: string | null }> =
-        Array.isArray(data) ? data : [];
-      const weekAssignments = assignments.filter((a) => {
-        if (!a.due_at) return false;
-        return weekDates.includes(a.due_at.slice(0, 10));
-      });
-      for (const a of weekAssignments) {
-        await supabase.functions.invoke('canvas-patch', {
-          body: {
-            patches: [{
-              courseId: String(courseId),
-              assignmentId: String(a.id),
-              action: 'delete',
-            }],
-          },
-        });
-        console.warn(`Deleted rogue ${subject} assignment: ${a.name}`);
-        await supabase.from('deploy_log').insert({
-          subject,
-          week_id: weekIdForLog,
-          action: 'auto_delete_rogue',
-          status: 'OK',
-          message: `Deleted rogue ${subject} assignment "${a.name}" (id ${a.id}) in course ${courseId}`,
-          payload: { courseId, assignmentId: a.id, name: a.name, due_at: a.due_at },
-        });
+      const ov = editOverrides[r.rowKey] || {};
+      const res = await callEdge<{ status?: string; canvasUrl?: string; error?: string }>(
+        'canvas-deploy-assignment',
+        {
+          subject: r.subject,
+          courseId: r.courseId,
+          title: ov.title ?? r.title,
+          description: r.description,
+          points: ov.points ?? r.points,
+          gradingType: ov.gradingType ?? r.gradingType,
+          assignmentGroup: r.assignmentGroup,
+          dueDate: ov.dueDate ?? r.dueDate ?? undefined,
+          omitFromFinal: r.omitFromFinal,
+        },
+      );
+      if (res?.status === 'DEPLOYED' || res?.status === 'NO_CHANGE') {
+        results[r.rowKey] = 'DEPLOYED';
+        ok++;
+      } else {
+        toast.error(`Deploy failed: ${r.title}`, { description: res?.error });
+        results[r.rowKey] = 'ERROR';
+        err++;
       }
     }
-  }
 
-
-  const statusBadge = (s: DeployStatus) => {
-    switch (s) {
-      case 'NEW':
-        return <Badge className="bg-primary/15 text-primary border-primary/30 text-[9px]" variant="outline">NEW</Badge>;
-      case 'UPDATE':
-        return <Badge className="bg-warning/15 text-warning border-warning/30 text-[9px]" variant="outline">UPDATE</Badge>;
-      case 'NO_CHANGE':
-        return <Badge className="bg-muted text-muted-foreground text-[9px]" variant="outline">UP TO DATE</Badge>;
-      case 'SKIP':
-        return <Badge className="bg-muted text-muted-foreground text-[9px]" variant="outline">SKIP</Badge>;
-      case 'DEPLOYED':
-        return <Badge className="bg-success/15 text-success border-success/30 text-[9px] gap-1" variant="outline"><CheckCircle2 className="h-2.5 w-2.5" />DONE</Badge>;
-      case 'ERROR':
-        return <Badge variant="destructive" className="text-[9px]">ERROR</Badge>;
-    }
+    setDeployResults(results);
+    toast.success(`${ok} deployed, ${err} failed`, { id: toastId });
+    void logDeployHabit(deployable.map((r) => r.subject));
+    setDeploying(false);
   };
 
-  const counts = useMemo(() => {
-    const c = { NEW: 0, UPDATE: 0, NO_CHANGE: 0, SKIP: 0 };
-    for (const r of filtered) {
-      if (r.status in c) c[r.status as keyof typeof c]++;
-    }
-    return c;
-  }, [filtered]);
-
-  // ── Q4W5 DRY-RUN TEST HARNESS ──────────────────────────────
-  const handleRunTests = async () => {
-    if (!config) return;
+  const handleTestRun = async () => {
     setTestRunning(true);
     try {
-      const Q = 'Q4';
-      const W = 5;
+      const Q = selectedMonth;
+      const W = selectedWeek;
       const weekDates = computeWeekDates(Q, W);
-
-      const { data: weekRec } = await supabase
-        .from('weeks').select('id').eq('quarter', Q).eq('week_num', W).maybeSingle();
-      if (!weekRec) {
-        toast.error('No Q4W5 week found in database');
-        setTestRunning(false);
-        return;
-      }
-      const { data: pRows } = await supabase
-        .from('pacing_rows').select('*').eq('week_id', weekRec.id);
-      const rows = pRows || [];
-
-      const built: BuiltAssignment[] = [];
-      for (const subject of SUBJECTS) {
-        for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
-          const day = DAYS[dayIdx];
-          const dayRows = rows.filter((r: any) => r.subject === subject && r.day === day);
-          for (const row of dayRows) {
-            if (!row.type || row.type === '-' || row.type === 'No Class') continue;
-            if (!row.create_assign) continue;
-
-            const cell: PacingCell = {
-              value: row.in_class || row.lesson_num || '',
-              lessonNum: row.lesson_num || '',
-              isTest: (row.type || '').toLowerCase().includes('test'),
-              isReview: (row.in_class || '').toLowerCase().includes('review'),
-              isNoClass: row.type === '-' || row.type === 'No Class',
-              hint_override: (row as any).hint_override ?? null,
-            };
-
-            if (subject === 'Math') {
-              const items = await expandMathRow(dayIdx, cell, { config, contentMap, weekDates });
-              built.push(...items);
-              continue;
-            }
-            if (subject === 'Reading' && cell.isTest) {
-              const t = await buildAssignmentForCell('Reading', dayIdx, cell,
-                { config, contentMap, weekDates }, { type: 'Test' });
-              if (t) built.push(t);
-              const c = await buildAssignmentForCell('Reading', dayIdx, cell,
-                { config, contentMap, weekDates }, { type: 'Checkout', isSynthetic: true });
-              if (c) built.push(c);
-              continue;
-            }
-            if (subject === 'Spelling' && !cell.isTest) continue;
-            if (subject === 'Language Arts') {
-              const upper = (row.type || '').toUpperCase();
-              if (!upper.includes('CP') && !upper.includes('TEST') &&
-                  !upper.includes('CLASSROOM PRACTICE')) continue;
-            }
-            if (subject === 'History' || subject === 'Science') continue;
-
-            const a = await buildAssignmentForCell(subject, dayIdx, cell,
-              { config, contentMap, weekDates });
-            if (a) built.push(a);
-          }
-        }
-      }
+      const built = deployable.slice(0, 10);
 
       const dateRange = `${weekDates[0]} – ${weekDates[4]}`;
       const quarterColor = (config as any).quarterColors?.[Q] || '#0065a7';
       const buildPage = (subj: string) => {
-        const sRows: CanvasPageRow[] = rows
+        const sRows: CanvasPageRow[] = pacingDbRows
           .filter((r: any) => r.subject === subj || (subj === 'Reading' && r.subject === 'Spelling'))
           .map((r: any) => ({
-            day: r.day, type: r.type, lesson_num: r.lesson_num,
-            in_class: r.in_class, at_home: r.at_home, canvas_url: r.canvas_url,
-            canvas_assignment_id: r.canvas_assignment_id, object_id: null,
-            subject: r.subject, resources: r.resources,
-          }));
+          day: r.day, type: r.type, lesson_num: r.lesson_num,
+          in_class: r.in_class, at_home: r.at_home, canvas_url: r.canvas_url,
+          canvas_assignment_id: r.canvas_assignment_id, object_id: null,
+          subject: r.subject, resources: r.resources,
+        }));
         return generateCanvasPageHtml({
           subject: subj === 'Reading' ? 'Reading & Spelling' : subj,
           rows: sRows, quarter: Q, weekNum: W, dateRange,
@@ -553,71 +409,79 @@ export default function AssignmentsPage() {
   return (
     <TooltipProvider delayDuration={150}>
       <div className="space-y-6 animate-in fade-in duration-300">
+        {isDryRunMode() && (
+          <div className="rounded-md border border-yellow-500/60 bg-yellow-500/15 px-4 py-2.5 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <p className="text-xs font-semibold text-yellow-700">
+              🧪 Dry-Run Mode — No Canvas changes will be made
+            </p>
+          </div>
+        )}
+
         {/* Controls */}
         <div className="flex items-center gap-3 flex-wrap">
           <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {['Q1', 'Q2', 'Q3', 'Q4'].map((q) => (
-                <SelectItem key={q} value={q}>{q}</SelectItem>
+                <SelectItem key={q} value={q}>
+                  {q}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
           <Select value={String(selectedWeek)} onValueChange={(v) => setSelectedWeek(Number(v))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {Array.from({ length: 12 }, (_, i) => (
-                <SelectItem key={i + 1} value={String(i + 1)}>Week {i + 1}</SelectItem>
+                <SelectItem key={i + 1} value={String(i + 1)}>
+                  Week {i + 1}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          <div className="flex items-center gap-1.5 ml-2">
-            {FILTER_CHIPS.map((chip) => (
-              <Button
-                key={chip}
-                variant={filter === chip ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 px-2.5 text-xs"
-                onClick={() => setFilter(chip)}
-              >
-                {chip}
-              </Button>
-            ))}
-          </div>
+          {isLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
 
-          <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <div className="ml-auto flex items-center gap-2">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-border">
-              <Switch id="test-mode" checked={testMode} onCheckedChange={setTestMode} />
-              <Label htmlFor="test-mode" className="text-[10px] uppercase tracking-wider cursor-pointer">
+              <input
+                id="ap-test-mode"
+                type="checkbox"
+                checked={testMode}
+                onChange={(e) => setTestMode(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer"
+              />
+              <label htmlFor="ap-test-mode" className="text-[10px] uppercase tracking-wider cursor-pointer">
                 Test Mode
-              </Label>
+              </label>
             </div>
+
             <Button
-              variant="outline" size="sm"
-              onClick={handleRunTests}
-              disabled={!testMode || testRunning}
+              size="sm"
+              variant="outline"
+              onClick={handleTestRun}
+              disabled={deploying || testRunning || deployable.length === 0}
               className="gap-1.5"
             >
               {testRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
-              Run Q4W5 Tests 🧪
+              {testRunning ? 'Testing\u2026' : 'Run Tests'}
             </Button>
-            <Badge variant="outline" className="text-[9px]">{counts.NEW} NEW</Badge>
-            <Badge variant="outline" className="text-[9px]">{counts.UPDATE} UPDATE</Badge>
-            <Badge variant="outline" className="text-[9px]">{counts.NO_CHANGE} OK</Badge>
-            <Badge variant="outline" className="text-[9px]">{counts.SKIP} SKIP</Badge>
-            <Button variant="outline" size="sm" onClick={selectAllPending} disabled={deployable.length === 0}>
-              Select Pending ({deployable.length})
-            </Button>
+
             <Button
-              onClick={() => setDiffOpen(true)}
-              disabled={deploying || selected.size === 0 || isLoading}
-              className="gap-1.5 bg-success hover:bg-success/90 text-success-foreground"
               size="sm"
+              variant="deploy"
+              onClick={handleDeployAll}
+              disabled={deploying || deployable.length === 0}
+              className="gap-1.5"
             >
               {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-              Deploy Selected ({selected.size})
+              {deploying ? 'Deploying\u2026' : `Deploy ${deployable.length}`}
             </Button>
           </div>
         </div>
@@ -625,7 +489,7 @@ export default function AssignmentsPage() {
         {testMode && (
           <Card className="border-warning bg-warning/10">
             <CardContent className="py-2.5 flex items-center gap-2">
-              <FlaskConical className="h-4 w-4 text-warning" />
+              <AlertCircle className="h-4 w-4 text-warning" />
               <p className="text-xs font-semibold text-warning">
                 🧪 TEST MODE — no Canvas API calls will be made
               </p>
@@ -668,6 +532,21 @@ export default function AssignmentsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
+              <div className="border-b flex gap-2 px-4 py-2 bg-muted/50 overflow-x-auto">
+                {FILTER_CHIPS.map((chip) => (
+                  <button
+                    key={chip}
+                    onClick={() => setFilter(chip)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded whitespace-nowrap transition-colors ${
+                      filter === chip
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-background text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
               <div className="overflow-auto">
                 <Table>
                   <TableHeader>
@@ -675,180 +554,110 @@ export default function AssignmentsPage() {
                       <TableHead className="w-8"></TableHead>
                       <TableHead className="w-8"></TableHead>
                       <TableHead className="text-xs w-[90px]">Status</TableHead>
-                      <TableHead className="text-xs w-[80px]">Day</TableHead>
+                      <TableHead className="text-xs w-20">Day</TableHead>
                       <TableHead className="text-xs">Title</TableHead>
-                      <TableHead className="text-xs">Group</TableHead>
-                      <TableHead className="text-xs text-center w-[60px]">Pts</TableHead>
-                      <TableHead className="text-xs">Due (ET)</TableHead>
+                      <TableHead className="text-xs w-[120px]">Assignment Group</TableHead>
+                      <TableHead className="text-xs w-16 text-center">Pts</TableHead>
+                      <TableHead className="text-xs w-[80px]">Due (ET)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map((row) => {
-                      const liveStatus = deployResults[row.rowKey] || row.status;
-                      const isSkip = row.status === 'SKIP';
-                      const isForced = forcedRows.has(row.rowKey);
-                      const canSelect = row.status === 'NEW' || row.status === 'UPDATE' || isForced;
+                      const isSelected = selected.has(row.rowKey);
                       const isExpanded = expanded.has(row.rowKey);
+                      const isForced = forcedRows.has(row.rowKey);
+                      const liveStatus = deployResults[row.rowKey] ?? row.status;
+                      const canDeploy = row.status === 'NEW' || row.status === 'UPDATE' || isForced;
+
                       return (
-                        <>
-                          <TableRow
-                            key={row.rowKey}
-                            className={
-                              liveStatus === 'DEPLOYED' ? 'bg-success/5' :
-                              liveStatus === 'ERROR' ? 'bg-destructive/10' :
-                              isSkip ? 'opacity-60' : ''
-                            }
-                          >
-                            <TableCell>
-                              <Checkbox
-                                checked={selected.has(row.rowKey)}
-                                onCheckedChange={() => toggleSelect(row.rowKey)}
-                                disabled={!canSelect}
+                        <TableRow
+                          key={row.rowKey}
+                          className={`${
+                            liveStatus === 'DEPLOYED' ? 'bg-success/10' :
+                            liveStatus === 'ERROR' ? 'bg-destructive/10' :
+                            'hover:bg-muted/50'
+                          }`}
+                        >
+                          <TableCell className="w-8">
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={() => {
+                                setSelected((p) => {
+                                  const n = new Set(p);
+                                  if (n.has(row.rowKey)) n.delete(row.rowKey);
+                                  else n.add(row.rowKey);
+                                  return n;
+                                });
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="w-8">
+                            <button
+                              onClick={() => {
+                                setExpanded((p) => {
+                                  const n = new Set(p);
+                                  if (n.has(row.rowKey)) n.delete(row.rowKey);
+                                  else n.add(row.rowKey);
+                                  return n;
+                                });
+                              }}
+                              className={`p-0.5 rounded hover:bg-muted transition-colors ${isExpanded ? 'bg-muted' : ''}`}
+                            >
+                              <ChevronDown
+                                className={`h-4 w-4 text-muted-foreground transition-transform ${
+                                  isExpanded ? 'rotate-180' : ''
+                                }`}
                               />
-                            </TableCell>
-                            <TableCell>
-                              <Collapsible open={isExpanded} onOpenChange={() => toggleExpand(row.rowKey)}>
-                                <CollapsibleTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-6 w-6">
-                                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                  </Button>
-                                </CollapsibleTrigger>
-                              </Collapsible>
-                            </TableCell>
-                            <TableCell>
-                              {isSkip && row.skipReason ? (
-                                <div className="flex items-center gap-1.5">
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="inline-flex items-center gap-1">
-                                        {statusBadge(liveStatus)}
-                                        <SkipForward className="h-3 w-3 text-muted-foreground" />
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>{row.skipReason}</TooltipContent>
-                                  </Tooltip>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        size="sm"
-                                        variant={isForced ? 'default' : 'outline'}
-                                        className="h-5 px-1.5 text-[9px] gap-1"
-                                        onClick={() => {
-                                          toggleForce(row.rowKey);
-                                          if (!isForced) {
-                                            setSelected((prev) => {
-                                              const next = new Set(prev);
-                                              next.add(row.rowKey);
-                                              return next;
-                                            });
-                                          }
-                                        }}
-                                      >
-                                        {isForced ? 'FORCED' : 'FORCE'}
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Bypass gatekeeper and deploy this assignment to Canvas anyway.</TooltipContent>
-                                  </Tooltip>
-                                </div>
-                              ) : statusBadge(liveStatus)}
-                            </TableCell>
-                            <TableCell className="text-xs font-medium text-primary">{row.day}</TableCell>
-                            <TableCell className="text-xs">
-                              <div className="flex flex-col gap-0.5">
-                                <span className="font-semibold flex items-center gap-1.5">
-                                  {row.title}
-                                  {row.isSynthetic && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[8px] h-4 px-1 bg-primary/10 text-primary border-primary/30"
+                            </button>
+                          </TableCell>
+                          <TableCell className="text-[10px]">
+                            {canDeploy ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div>
+                                    <Button
+                                      size="sm"
+                                      variant={isForced ? 'default' : 'outline'}
+                                      onClick={() => toggleForce(row.rowKey)}
+                                      className="text-[8px] h-5 px-1"
                                     >
-                                      AUTO
-                                    </Badge>
-                                  )}
-                                </span>
-                                <span className="text-[9px] text-muted-foreground">
-                                  {row.subject} · Course {row.courseId}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">
-                              {row.assignmentGroup}
-                            </TableCell>
-                            <TableCell className="text-xs text-center font-mono">{row.points}</TableCell>
-                            <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap">
-                              {formatDueET(row.dueDate)}
-                            </TableCell>
-                          </TableRow>
-                          {isExpanded && (() => {
-                            const overrides = editOverrides[row.rowKey] || {};
-                            const setField = (field: string, value: any) => {
-                              setEditOverrides(prev => ({
-                                ...prev,
-                                [row.rowKey]: { ...prev[row.rowKey], [field]: value }
-                              }));
-                            };
-                            return (
-                              <TableRow key={`${row.rowKey}_exp`} className="bg-muted/20">
-                                <TableCell colSpan={8} className="p-4 space-y-3">
-                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                    <div className="space-y-1">
-                                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Title</label>
-                                      <Input
-                                        className="text-xs h-8"
-                                        value={overrides.title ?? row.title}
-                                        onChange={(e) => setField('title', e.target.value)}
-                                      />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Due Date (ET midnight)</label>
-                                      <Input
-                                        type="date"
-                                        className="text-xs h-8"
-                                        value={overrides.dueDate?.slice(0, 10) ?? (row.dueDate?.slice(0, 10) || '')}
-                                        onChange={(e) => setField('dueDate', e.target.value ? `${e.target.value}T23:59:00` : '')}
-                                      />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Points</label>
-                                      <Input
-                                        type="number"
-                                        className="text-xs h-8 w-20"
-                                        value={overrides.points ?? row.points}
-                                        onChange={(e) => setField('points', Number(e.target.value))}
-                                      />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Grading Type</label>
-                                      <select
-                                        className="h-8 rounded border border-input bg-background px-2 text-xs w-full"
-                                        value={overrides.gradingType ?? row.gradingType}
-                                        onChange={(e) => setField('gradingType', e.target.value)}
-                                      >
-                                        <option value="points">Points</option>
-                                        <option value="pass_fail">Pass/Fail</option>
-                                        <option value="not_graded">Not Graded</option>
-                                      </select>
-                                    </div>
+                                      {isForced ? '✓ Force' : 'Force'}
+                                    </Button>
                                   </div>
-                                  <div className="space-y-1">
-                                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Description Preview</div>
-                                    <div
-                                      className="text-sm prose prose-sm max-w-none [&_a]:text-primary [&_a]:underline rounded border border-border/50 bg-background p-3 max-h-40 overflow-auto"
-                                      dangerouslySetInnerHTML={{ __html: row.description }}
-                                    />
-                                  </div>
-                                  <div className="text-[10px] font-mono text-muted-foreground">
-                                    hash: {row.contentHash.slice(0, 12)}…
-                                    {row.storedHash && ` · stored: ${row.storedHash.slice(0, 12)}…`}
-                                    {Object.keys(overrides).length > 0 && (
-                                      <span className="ml-2 text-amber-500 font-semibold">● Overrides pending</span>
-                                    )}
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })()}
-                        </>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="text-[10px]">
+                                  Force deployment (normally: {row.status})
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : statusBadge(liveStatus)}
+                          </TableCell>
+                          <TableCell className="text-xs font-medium text-primary">{row.day}</TableCell>
+                          <TableCell className="text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold flex items-center gap-1.5">
+                                {row.title}
+                                {row.isSynthetic && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[8px] h-4 px-1 bg-primary/10 text-primary border-primary/30"
+                                  >
+                                    AUTO
+                                  </Badge>
+                                )}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground">
+                                {row.subject} · Course {row.courseId}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">
+                            {row.assignmentGroup}
+                          </TableCell>
+                          <TableCell className="text-xs text-center font-mono">{row.points}</TableCell>
+                          <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap">
+                            {formatDueET(row.dueDate)}
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
                   </TableBody>
@@ -858,53 +667,35 @@ export default function AssignmentsPage() {
           </Card>
         )}
 
-        <Card className="border-muted bg-muted/30">
-          <CardContent className="py-3 flex items-center gap-3">
-            <AlertCircle size={16} className="text-muted-foreground shrink-0" />
-            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
-              Friday Exception · History/Science skip · DST-aware due 11:59 PM ET · Hash-skip prevents duplicates.
-            </p>
-          </CardContent>
-        </Card>
-
+        {/* Safety Diff Modal */}
         <SafetyDiffModal
           open={diffOpen}
           onOpenChange={setDiffOpen}
           month={selectedMonth}
           week={selectedWeek}
           action="DEPLOY_ASSIGNMENTS"
-          itemCount={selected.size}
-          items={previewRows
-            .filter((r) => selected.has(r.rowKey))
-            .map((r) => ({ label: r.title, subject: r.subject }))}
-          onApprove={handleDeploy}
-          validation={
-            diffOpen
-              ? validateDeployment({
-                  assignments: previewRows.filter((r) => selected.has(r.rowKey)),
-                  contentMap,
-                })
-              : undefined
-          }
+          itemCount={deployable.length}
+          items={deployable.map((r) => ({ label: r.title, subject: r.subject }))}
+          onApprove={handleSafetyApprove}
         />
 
+        {/* Test Results Dialog */}
         <Dialog open={testOpen} onOpenChange={setTestOpen}>
-          <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
+          <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <FlaskConical className="h-5 w-5 text-warning" />
-                Q4W5 Test Results
-              </DialogTitle>
+              <DialogTitle>Q4W5 Test Results</DialogTitle>
             </DialogHeader>
             {(() => {
               const pass = testResults.filter((r) => r.status === 'PASS').length;
               const fail = testResults.filter((r) => r.status === 'FAIL').length;
               const warn = testResults.filter((r) => r.status === 'WARN').length;
               return (
-                <div className="text-sm font-mono mb-3">
-                  <span className="text-success">{pass} passed</span> ·{' '}
-                  <span className="text-destructive">{fail} failed</span> ·{' '}
-                  <span className="text-warning">{warn} warnings</span>
+                <div className="text-xs text-muted-foreground space-y-1 border-b pb-3">
+                  {pass > 0 && <span className="text-success">✅ {pass} passed</span>}
+                  {fail > 0 && <span className="text-destructive"> · ❌ {fail} failed</span>}
+                  {warn > 0 && (
+                    <span className="text-warning">{warn} warnings</span>
+                  )}
                 </div>
               );
             })()}
