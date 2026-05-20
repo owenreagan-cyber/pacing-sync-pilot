@@ -1016,7 +1016,7 @@ export default function PacingEntryPage({
                     rows={8}
                     value={pastedText}
                     onChange={(e) => setPastedText(e.target.value)}
-                    placeholder={`Paste or type your pacing for this week.\n\nExample:\nMath: 101, 102, 103, 104, Test 10\nReading: 109, 110, 111, 112, Test 11\nSpelling: L97, L98, L99, review, Test\n[...]
+                    placeholder={`Paste or type your pacing for this week.\n\nExample:\nMath: 101, 102, 103, 104, Test 10\nReading: 109, 110, 111, 112, Test 11\nSpelling: L97, L98, L99, review, Test\nELA: 12.1, 12.2, 12.3 CP44, CP44, Test\nHistory: Ch5, Ch5, Ch6, Ch6, -\nScience: -, -, -, -, -`}
                     className="text-xs font-mono"
                   />
                   <Button onClick={handleParseText} disabled={aiParsing} className="w-full gap-1.5">

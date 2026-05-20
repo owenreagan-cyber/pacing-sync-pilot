@@ -545,6 +545,7 @@ export type Database = {
           extra_sections: Json | null
           footer_line: string | null
           homeroom_notes: string | null
+          homeroom_notes_html: string | null
           html_content: string | null
           id: string
           points_of_contact: Json
@@ -561,6 +562,7 @@ export type Database = {
           extra_sections?: Json | null
           footer_line?: string | null
           homeroom_notes?: string | null
+          homeroom_notes_html?: string | null
           html_content?: string | null
           id?: string
           points_of_contact?: Json
@@ -577,6 +579,7 @@ export type Database = {
           extra_sections?: Json | null
           footer_line?: string | null
           homeroom_notes?: string | null
+          homeroom_notes_html?: string | null
           html_content?: string | null
           id?: string
           points_of_contact?: Json

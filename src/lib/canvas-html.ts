@@ -311,7 +311,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       let txt = stripLessonTitle(raw, r.subject);
       txt = injectFileLinks(txt, contentMap, r.subject);
       if (r.canvas_url) {
-        txt = `<a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-[...]
+        txt = `<a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
       } else {
         txt = `<span>${txt}</span>`;
       }
@@ -328,7 +328,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         txt = injectFileLinks(txt, contentMap, r.subject);
         if (r.canvas_url && r.subject === 'Math') {
           atHomeFragments.push(
-            `    <p><a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" da[...]
+            `    <p><a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
           );
         } else {
           atHomeFragments.push(`    <p>${txt}</p>`);

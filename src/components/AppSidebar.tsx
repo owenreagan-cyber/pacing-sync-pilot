@@ -32,7 +32,6 @@ import {
   SidebarMenuSubItem,
   SidebarMenuSubButton,
   SidebarMenuItem as SidebarMenuItemComponent,
-  SidebarCollapsible,
 } from '@/components/ui/sidebar';
 import { Badge } from '@/components/ui/badge';
 import { useState } from 'react';
