@@ -61,7 +61,7 @@ export function generateAssignmentTitle(
     case 'Language Arts':
       if (type === 'Test') return `${prefix} Shurley Test`;
       if (type === 'CP' || type === 'Classroom Practice') return `${prefix} Shurley English Classroom Practice ${num}`;
-      return `${prefix} English ${num}`;
+      return `${prefix} Shurley English ${num}`;
 
     default:
       return `${subject} ${type} ${num}`.trim();
