@@ -12,6 +12,7 @@ import { useConfig } from '@/lib/config';
 import { generateCanvasPageHtml, generateHomeroomPageHtml, generateRedirectPageHtml, type CanvasPageRow, type ContactEntry, type LinkEntry } from '@/lib/canvas-html';
 import type { ContentMapEntry } from '@/lib/auto-link';
 import type { Resource } from '@/types/thales';
+import { validateFpkPage } from '@/lib/validators/fpk-validator';
 
 function parseSubjectResources(
   subjectResourcesJson: Record<string, unknown[]> | null | undefined,
@@ -371,6 +372,17 @@ export default function PageBuilderPage() {
 
     try {
       const finalHtml = activeSubject === subject ? (editableHtml || html) : html;
+      
+      // Validate FPK compliance before deployment
+      const validation = validateFpkPage(finalHtml, subject);
+      if (!validation.pass) {
+        const criticalIssues = validation.issues.filter(i => i.severity === 'critical');
+        const errorMessages = criticalIssues.map(i => `${i.code}: ${i.message}`).join('; ');
+        toast.error(`FPK validation failed — ${subject}`, { description: errorMessages });
+        setDeployStatuses((p) => ({ ...p, [subject]: { status: 'VALIDATION_FAILED' } }));
+        return;
+      }
+
       const contentHash = await sha256Hex(finalHtml);
       const result = testMode
         ? {
@@ -466,6 +478,7 @@ export default function PageBuilderPage() {
     if (s.status === 'DEPLOYED') return <Badge className="text-[10px] bg-success text-success-foreground">DEPLOYED</Badge>;
     if (s.status === 'NO_CHANGE') return <Badge variant="secondary" className="text-[10px]">NO CHANGE</Badge>;
     if (s.status === 'ERROR') return <Badge variant="destructive" className="text-[10px]">ERROR</Badge>;
+    if (s.status === 'VALIDATION_FAILED') return <Badge variant="destructive" className="text-[10px]">VALIDATION FAILED</Badge>;
     return <Badge variant="outline" className="text-[10px]">{s.status}</Badge>;
   };
 
