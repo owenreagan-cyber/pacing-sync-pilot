@@ -203,9 +203,9 @@ export default function FileOrganizerPage() {
       if (error) throw error;
       updateMapperRowField(row.canvas_file_id, patch);
       return {
-        resourceType: patch.ai_resource_type,
-        purpose: patch.ai_purpose,
-        snippet: patch.ai_snippet,
+        resourceType: row.ai_resource_type ?? 'Already Formatted',
+        purpose: row.ai_purpose ?? ['Already Formatted'],
+        snippet: (row.ai_snippet ?? fallbackName).slice(0, 200),
         suggestedName: patch.ai_suggested_name,
         suggestedFolder: patch.ai_suggested_folder,
         alreadyFormatted: true,
