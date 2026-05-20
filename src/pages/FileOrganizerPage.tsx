@@ -194,10 +194,6 @@ export default function FileOrganizerPage() {
       const patch = {
         ai_suggested_name: fallbackName,
         ai_suggested_folder: fallbackFolder,
-        ai_resource_type: row.ai_resource_type ?? 'Already Formatted',
-        ai_purpose: row.ai_purpose ?? ['Already Formatted'],
-        ai_snippet: (row.ai_snippet ?? fallbackName).slice(0, 200),
-        ai_folder_chunked: false,
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
