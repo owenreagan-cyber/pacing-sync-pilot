@@ -162,11 +162,7 @@ export type Database = {
       }
       canvas_orphan_files: {
         Row: {
-          ai_folder_chunked: boolean
           ai_lesson_ref: string | null
-          ai_purpose: string[] | null
-          ai_resource_type: string | null
-          ai_snippet: string | null
           ai_suggested_folder: string | null
           ai_suggested_name: string | null
           canvas_file_id: string
@@ -178,11 +174,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          ai_folder_chunked?: boolean
           ai_lesson_ref?: string | null
-          ai_purpose?: string[] | null
-          ai_resource_type?: string | null
-          ai_snippet?: string | null
           ai_suggested_folder?: string | null
           ai_suggested_name?: string | null
           canvas_file_id: string
@@ -194,11 +186,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          ai_folder_chunked?: boolean
           ai_lesson_ref?: string | null
-          ai_purpose?: string[] | null
-          ai_resource_type?: string | null
-          ai_snippet?: string | null
           ai_suggested_folder?: string | null
           ai_suggested_name?: string | null
           canvas_file_id?: string
