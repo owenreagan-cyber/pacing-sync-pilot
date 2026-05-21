@@ -78,6 +78,14 @@ interface MapperResult {
 }
 
 const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
+const MAPPER_MAX_CONCURRENCY = 5;
+const MAPPER_TABLE_PAGE_SIZE = 20;
+const EXECUTE_CHUNK_SIZE = 25;
+const PAUSE_POLL_MS = 150;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export default function FileOrganizerPage() {
   const [files, setFiles] = useState<OrphanFile[]>([]);
@@ -112,7 +120,14 @@ export default function FileOrganizerPage() {
   const [mapperRunning, setMapperRunning] = useState(false);
   const [mapperExecuting, setMapperExecuting] = useState(false);
   const [mapperProgress, setMapperProgress] = useState({ current: 0, total: 0 });
+  const [mapperProgressLabel, setMapperProgressLabel] = useState<string>('Processing files');
   const [rowExecutingId, setRowExecutingId] = useState<string | null>(null);
+  const [mapperPaused, setMapperPaused] = useState(false);
+  const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
+  const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
+  const [mapperTablePage, setMapperTablePage] = useState(1);
+  const mapperPausedRef = useRef(false);
+  const mapperCancelRequestedRef = useRef(false);
 
   const selected = files.find((f) => f.canvas_file_id === selectedId) ?? null;
   const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
@@ -120,6 +135,8 @@ export default function FileOrganizerPage() {
     ? paginate(files, currentPage, PAGE_SIZE)
     : files;
   const numPages = isBatchMode ? totalPages(files.length, PAGE_SIZE) : 1;
+  const mapperTablePages = totalPages(mapperRows.length, MAPPER_TABLE_PAGE_SIZE);
+  const visibleMapperRows = paginate(mapperRows, mapperTablePage, MAPPER_TABLE_PAGE_SIZE);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -173,6 +190,7 @@ export default function FileOrganizerPage() {
       toast.error('Failed to load course files', { description: error.message });
     } else {
       setMapperRows((data ?? []) as OrphanFile[]);
+      setMapperTablePage(1);
     }
     setMapperLoading(false);
   }, [mapperCourseId]);
@@ -222,22 +240,29 @@ export default function FileOrganizerPage() {
       return;
     }
     setMapperRunning(true);
+    setMapperPaused(false);
+    setMapperCancelRequested(false);
+    mapperPausedRef.current = false;
+    mapperCancelRequestedRef.current = false;
+    setMapperInFlightCount(0);
+    setMapperProgressLabel('Mapping files');
     setMapperProgress({ current: 0, total: rows.length });
 
     let skipped = 0;
     let mapped = 0;
+    let failed = 0;
+    let completed = 0;
+    let nextIndex = 0;
 
     try {
-      for (let i = 0; i < rows.length; i += 1) {
-        const row = rows[i];
-        setMapperProgress({ current: i + 1, total: rows.length });
+      const processOne = async (row: OrphanFile) => {
         const displayName = row.original_name ?? '';
         const alreadyFormatted = isAlreadyFormattedDisplayName(displayName);
 
         if (alreadyFormatted) {
           await classifyAlreadyFormatted(row);
           skipped += 1;
-          continue;
+          return;
         }
 
         const { data, error } = await supabase.functions.invoke('canvas-mapper-classify', {
@@ -256,15 +281,62 @@ export default function FileOrganizerPage() {
           ai_folder_chunked: !!mappedRow.suggestedFolder.match(/\d+\s*-\s*\d+/),
         });
         mapped += 1;
-      }
+      };
 
-      toast.success(title, {
-        description: `${mapped} AI-mapped, ${skipped} already formatted`,
+      const workerCount = Math.min(MAPPER_MAX_CONCURRENCY, rows.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (true) {
+          if (mapperCancelRequestedRef.current) return;
+
+          while (mapperPausedRef.current && !mapperCancelRequestedRef.current) {
+            await sleep(PAUSE_POLL_MS);
+          }
+          if (mapperCancelRequestedRef.current) return;
+
+          const idx = nextIndex;
+          nextIndex += 1;
+          if (idx >= rows.length) return;
+          const row = rows[idx];
+
+          setMapperInFlightCount((prev) => prev + 1);
+          try {
+            await processOne(row);
+          } catch (e: any) {
+            failed += 1;
+            toast.error('File map failed', {
+              description: `${row.original_name ?? row.canvas_file_id}: ${e?.message ?? String(e)}`,
+            });
+          } finally {
+            completed += 1;
+            setMapperProgress({ current: completed, total: rows.length });
+            setMapperInFlightCount((prev) => Math.max(0, prev - 1));
+            await sleep(0);
+          }
+        }
       });
-    } catch (e: any) {
-      toast.error(`${title} failed`, { description: e?.message ?? String(e) });
+
+      await Promise.all(workers);
+
+      if (mapperCancelRequestedRef.current) {
+        toast.info('Mapping canceled', {
+          description: `${mapped} AI-mapped, ${skipped} already formatted, ${failed} failed`,
+        });
+      } else if (failed > 0) {
+        toast.warning(`${title} completed with errors`, {
+          description: `${mapped} AI-mapped, ${skipped} already formatted, ${failed} failed`,
+        });
+      } else {
+        toast.success(title, {
+          description: `${mapped} AI-mapped, ${skipped} already formatted`,
+        });
+      }
     } finally {
       setMapperRunning(false);
+      setMapperPaused(false);
+      setMapperCancelRequested(false);
+      mapperPausedRef.current = false;
+      mapperCancelRequestedRef.current = false;
+      setMapperInFlightCount(0);
     }
   }, [classifyAlreadyFormatted, updateMapperRowField]);
 
@@ -317,6 +389,7 @@ export default function FileOrganizerPage() {
       );
 
       setMapperRows(dedupedRows);
+      setMapperTablePage(1);
 
       if (dedupedRows.length === 0) {
         toast.info('No files found across all target courses');
@@ -330,6 +403,17 @@ export default function FileOrganizerPage() {
       setMapperLoading(false);
     }
   }, [courseOptions, runMapperSequentially]);
+
+  const handlePauseResumeSweep = useCallback(() => {
+    if (!mapperRunning || mapperCancelRequested) return;
+    setMapperPaused((prev) => !prev);
+  }, [mapperCancelRequested, mapperRunning]);
+
+  const handleCancelSweep = useCallback(() => {
+    if (!mapperRunning) return;
+    setMapperCancelRequested(true);
+    setMapperPaused(false);
+  }, [mapperRunning]);
 
   const executeMapperRow = useCallback(
     async (row: OrphanFile) => {
@@ -363,25 +447,43 @@ export default function FileOrganizerPage() {
     }
 
     setMapperExecuting(true);
+    setMapperProgressLabel('Executing rename & move');
+    setMapperProgress({ current: 0, total: mapperRows.length });
     try {
       const payload = mapperRows.map((row) => ({
         fileId: row.canvas_file_id,
         suggestedName: row.ai_suggested_name,
         suggestedFolder: row.ai_suggested_folder,
       }));
-      const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
-        body: { items: payload },
-      });
-      if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
 
-      const succeededIds = new Set<string>(
-        (((data as any)?.results as Array<{ fileId: string; ok: boolean }>) ?? [])
+      const chunks: Array<typeof payload> = [];
+      for (let i = 0; i < payload.length; i += EXECUTE_CHUNK_SIZE) {
+        chunks.push(payload.slice(i, i + EXECUTE_CHUNK_SIZE));
+      }
+
+      const succeededIds = new Set<string>();
+      let processed = 0;
+
+      for (const chunk of chunks) {
+        const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
+          body: { items: chunk },
+        });
+        if (error) throw error;
+        if ((data as any)?.error) throw new Error((data as any).error);
+
+        const chunkResults = ((data as any)?.results as Array<{ fileId: string; ok: boolean }>) ?? [];
+        chunkResults
           .filter((r) => r.ok)
-          .map((r) => String(r.fileId)),
-      );
+          .forEach((r) => succeededIds.add(String(r.fileId)));
+
+        processed += chunk.length;
+        setMapperProgress({ current: Math.min(processed, payload.length), total: payload.length });
+        await sleep(0);
+      }
+
       setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
       setFiles((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
+      setMapperTablePage(1);
       toast.success('Bulk rename & move complete', {
         description: `${succeededIds.size} file(s) applied`,
       });
@@ -389,6 +491,7 @@ export default function FileOrganizerPage() {
       toast.error('Bulk execute failed', { description: e?.message ?? String(e) });
     } finally {
       setMapperExecuting(false);
+      setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
     }
   }, [mapperRows]);
 
@@ -419,6 +522,20 @@ export default function FileOrganizerPage() {
       loadMapperRows();
     }
   }, [loadMapperRows, mapperCourseId]);
+
+  useEffect(() => {
+    mapperPausedRef.current = mapperPaused;
+  }, [mapperPaused]);
+
+  useEffect(() => {
+    mapperCancelRequestedRef.current = mapperCancelRequested;
+  }, [mapperCancelRequested]);
+
+  useEffect(() => {
+    if (mapperTablePage > mapperTablePages) {
+      setMapperTablePage(mapperTablePages);
+    }
+  }, [mapperTablePage, mapperTablePages]);
 
   // Poll for batch progress while running
   useEffect(() => {
@@ -1013,7 +1130,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={loadMapperRows}
-                  disabled={!mapperCourseId || mapperLoading}
+                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting}
                   className="gap-1.5"
                 >
                   {mapperLoading ? (
@@ -1025,7 +1142,7 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   onClick={mapCourseSequentially}
-                  disabled={!mapperCourseId || mapperRunning || mapperRows.length === 0}
+                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || mapperRows.length === 0}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1038,7 +1155,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={mapAllCoursesSequentially}
-                  disabled={mapperRunning || mapperLoading}
+                  disabled={mapperRunning || mapperExecuting || mapperLoading}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1051,7 +1168,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="default"
                   onClick={executeMapperBulk}
-                  disabled={mapperExecuting || mapperRows.length === 0}
+                  disabled={mapperExecuting || mapperRunning || mapperRows.length === 0}
                   className="gap-1.5"
                 >
                   {mapperExecuting ? (
@@ -1066,12 +1183,35 @@ export default function FileOrganizerPage() {
               {mapperProgress.total > 0 && (
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">
-                    Processing file {mapperProgress.current} of {mapperProgress.total}...
+                    {mapperProgressLabel}: {mapperProgress.current} of {mapperProgress.total}
+                    {mapperRunning && (
+                      <span> · {mapperInFlightCount} in flight{mapperPaused ? ' · paused' : ''}</span>
+                    )}
                   </p>
                   <Progress
                     value={Math.round((mapperProgress.current / mapperProgress.total) * 100)}
                     className="h-2 max-w-lg"
                   />
+                  {mapperRunning && (
+                    <div className="pt-1 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handlePauseResumeSweep}
+                        disabled={mapperCancelRequested}
+                      >
+                        {mapperPaused ? 'Resume Sweep' : 'Pause Sweep'}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleCancelSweep}
+                        disabled={mapperCancelRequested}
+                      >
+                        {mapperCancelRequested ? 'Canceling…' : 'Cancel Sweep'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1105,7 +1245,7 @@ export default function FileOrganizerPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    mapperRows.map((row) => (
+                    visibleMapperRows.map((row) => (
                       <TableRow key={row.canvas_file_id}>
                         <TableCell className="max-w-[260px]">
                           <div className="truncate font-mono text-xs">
@@ -1170,6 +1310,8 @@ export default function FileOrganizerPage() {
                             size="sm"
                             onClick={() => executeMapperRow(row)}
                             disabled={
+                              mapperRunning ||
+                              mapperExecuting ||
                               rowExecutingId === row.canvas_file_id ||
                               !row.ai_suggested_name?.trim()
                             }
@@ -1188,6 +1330,35 @@ export default function FileOrganizerPage() {
                   )}
                 </TableBody>
               </Table>
+              {mapperRows.length > 0 && (
+                <div className="px-4 py-3 border-t flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Page {mapperTablePage} of {mapperTablePages} · showing {visibleMapperRows.length} of {mapperRows.length} file(s)
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setMapperTablePage((p) => Math.max(1, p - 1))}
+                      disabled={mapperTablePage <= 1}
+                      className="h-7 text-xs gap-1"
+                    >
+                      <ChevronLeft className="h-3 w-3" />
+                      Prev
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setMapperTablePage((p) => Math.min(mapperTablePages, p + 1))}
+                      disabled={mapperTablePage >= mapperTablePages}
+                      className="h-7 text-xs gap-1"
+                    >
+                      Next
+                      <ChevronRight className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

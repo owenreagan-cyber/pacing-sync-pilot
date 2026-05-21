@@ -37,6 +37,23 @@ interface MapperResult {
   alreadyFormatted?: boolean;
 }
 
+const mapperResponseSchema = {
+  name: "mapper_classification",
+  strict: true,
+  schema: {
+    type: "object",
+    properties: {
+      resourceType: { type: "string" },
+      purpose: { type: "array", items: { type: "string" } },
+      snippet: { type: "string" },
+      suggestedName: { type: "string" },
+      suggestedFolder: { type: "string" },
+    },
+    required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder"],
+    additionalProperties: false,
+  },
+} as const;
+
 function mimeFromName(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase();
   if (ext === "pdf") return "application/pdf";
@@ -64,6 +81,42 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
 
 function normalizeSnippetText(text: string, max = 200): string {
   return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function fallbackNeedsReview(displayName: string, fallbackId: string, snippetOverride?: string): MapperResult {
+  const safeName = (displayName || fallbackId || "unclassified-file").trim();
+  const safeSnippet = normalizeSnippetText(
+    snippetOverride || displayName || "No readable text extracted from file content.",
+  );
+  return {
+    resourceType: "Unknown - Needs Visual Review",
+    purpose: ["Needs Human Review"],
+    snippet: safeSnippet || "No readable text extracted from file content.",
+    suggestedName: safeName,
+    suggestedFolder: "Needs Visual Review",
+  };
+}
+
+function toValidatedMapperResult(value: unknown): MapperResult | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.resourceType !== "string" ||
+    typeof candidate.snippet !== "string" ||
+    typeof candidate.suggestedName !== "string" ||
+    typeof candidate.suggestedFolder !== "string" ||
+    !Array.isArray(candidate.purpose) ||
+    candidate.purpose.some((item) => typeof item !== "string")
+  ) {
+    return null;
+  }
+  return {
+    resourceType: candidate.resourceType.trim(),
+    purpose: candidate.purpose.map((item) => item.trim()).filter(Boolean),
+    snippet: normalizeSnippetText(candidate.snippet),
+    suggestedName: candidate.suggestedName.trim(),
+    suggestedFolder: candidate.suggestedFolder.trim(),
+  };
 }
 
 function decodePdfLiteral(input: string): string {
@@ -260,8 +313,33 @@ Deno.serve(async (req) => {
     const mime = fileResp.headers.get("content-type")?.split(";")[0]?.trim() ||
       mimeFromName(orphan.original_name || "");
     const extractedSnippet = extractFileContentSnippet(buf, mime);
-    const fileContentSnippet = normalizeSnippetText(extractedSnippet || displayName);
+    const normalizedExtractedSnippet = normalizeSnippetText(extractedSnippet);
+    const fileContentSnippet = normalizedExtractedSnippet;
     const base64 = await bytesToBase64(buf);
+
+    if (!fileContentSnippet) {
+      const mapped = fallbackNeedsReview(
+        displayName || orphan.original_name || "",
+        orphan.canvas_file_id,
+        "No readable text extracted from file content.",
+      );
+      await supabase
+        .from("canvas_orphan_files")
+        .update({
+          ai_resource_type: mapped.resourceType,
+          ai_purpose: mapped.purpose,
+          ai_snippet: mapped.snippet,
+          ai_suggested_name: mapped.suggestedName,
+          ai_suggested_folder: mapped.suggestedFolder,
+          ai_folder_chunked: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("canvas_file_id", orphan.canvas_file_id);
+
+      return new Response(JSON.stringify(mapped), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const prompt = `You are mapping Canvas files for school content operations.
 
@@ -304,6 +382,10 @@ Use the classify_mapper_file tool.`;
           },
         ],
         temperature: 0.1,
+        response_format: {
+          type: "json_schema",
+          json_schema: mapperResponseSchema,
+        },
         tools: [classifyTool],
         tool_choice: { type: "function", function: { name: "classify_mapper_file" } },
       }),
@@ -320,22 +402,39 @@ Use the classify_mapper_file tool.`;
     const aiResult = await response.json();
     const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
 
-    let mapped: MapperResult = {
-      resourceType: "Resource",
-      purpose: ["General"],
-      snippet: displayName.slice(0, 200),
-      suggestedName: displayName || orphan.canvas_file_id,
-      suggestedFolder: "Resources",
-    };
+    let mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
 
     if (toolCall?.function?.arguments) {
-      mapped = JSON.parse(toolCall.function.arguments) as MapperResult;
+      try {
+        const parsed = JSON.parse(toolCall.function.arguments);
+        const validated = toValidatedMapperResult(parsed);
+        if (validated) {
+          mapped = validated;
+        }
+      } catch {
+        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      }
+    } else {
+      try {
+        const content = aiResult?.choices?.[0]?.message?.content;
+        if (typeof content === "string" && content.trim()) {
+          const parsed = JSON.parse(content);
+          const validated = toValidatedMapperResult(parsed);
+          if (validated) {
+            mapped = validated;
+          }
+        }
+      } catch {
+        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      }
     }
 
     mapped = applyFolderRules(
       {
         ...mapped,
-        purpose: Array.isArray(mapped.purpose) ? mapped.purpose : ["General"],
+        purpose: Array.isArray(mapped.purpose) && mapped.purpose.length > 0
+          ? mapped.purpose
+          : ["Needs Human Review"],
         snippet: normalizeSnippetText(fileContentSnippet || mapped.snippet || displayName),
       },
       displayName || orphan.canvas_file_id,
