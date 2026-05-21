@@ -77,6 +77,8 @@ interface MapperResult {
   alreadyFormatted?: boolean;
 }
 
+const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
+
 export default function FileOrganizerPage() {
   const [files, setFiles] = useState<OrphanFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -214,26 +216,21 @@ export default function FileOrganizerPage() {
     [updateMapperRowField],
   );
 
-  const mapCourseSequentially = useCallback(async () => {
-    if (!mapperCourseId) {
-      toast.error('Select a course first');
+  const runMapperSequentially = useCallback(async (rows: OrphanFile[], title: string) => {
+    if (rows.length === 0) {
+      toast.info('No files found to map');
       return;
     }
-    if (mapperRows.length === 0) {
-      toast.info('No files found for this course');
-      return;
-    }
-
     setMapperRunning(true);
-    setMapperProgress({ current: 0, total: mapperRows.length });
+    setMapperProgress({ current: 0, total: rows.length });
 
     let skipped = 0;
     let mapped = 0;
 
     try {
-      for (let i = 0; i < mapperRows.length; i += 1) {
-        const row = mapperRows[i];
-        setMapperProgress({ current: i + 1, total: mapperRows.length });
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        setMapperProgress({ current: i + 1, total: rows.length });
         const displayName = row.original_name ?? '';
         const alreadyFormatted = isAlreadyFormattedDisplayName(displayName);
 
@@ -261,15 +258,78 @@ export default function FileOrganizerPage() {
         mapped += 1;
       }
 
-      toast.success('Content mapping complete', {
+      toast.success(title, {
         description: `${mapped} AI-mapped, ${skipped} already formatted`,
       });
     } catch (e: any) {
-      toast.error('Content mapping failed', { description: e?.message ?? String(e) });
+      toast.error(`${title} failed`, { description: e?.message ?? String(e) });
     } finally {
       setMapperRunning(false);
     }
-  }, [classifyAlreadyFormatted, mapperCourseId, mapperRows, updateMapperRowField]);
+  }, [classifyAlreadyFormatted, updateMapperRowField]);
+
+  const mapCourseSequentially = useCallback(async () => {
+    if (!mapperCourseId) {
+      toast.error('Select a course first');
+      return;
+    }
+    if (mapperRows.length === 0) {
+      toast.info('No files found for this course');
+      return;
+    }
+    await runMapperSequentially(mapperRows, 'Content mapping complete');
+  }, [mapperCourseId, mapperRows, runMapperSequentially]);
+
+  const mapAllCoursesSequentially = useCallback(async () => {
+    if (courseOptions.length === 0) {
+      toast.error('No course IDs configured');
+      return;
+    }
+
+    const targetSubjects = new Set<string>(GLOBAL_MAPPER_SUBJECTS);
+    const selectedCourses = courseOptions.filter((opt) => targetSubjects.has(opt.label));
+    if (selectedCourses.length === 0) {
+      toast.error('No target subjects found in course IDs');
+      return;
+    }
+
+    setMapperLoading(true);
+    try {
+      const rowsByCourse = await Promise.all(
+        selectedCourses.map(async (opt) => {
+          const { data, error } = await supabase
+            .from('canvas_orphan_files')
+            .select('*')
+            .eq('status', 'PENDING')
+            .eq('course_id', opt.value)
+            .order('created_at', { ascending: true });
+          if (error) throw new Error(`${opt.label}: ${error.message}`);
+          return (data ?? []) as OrphanFile[];
+        }),
+      );
+
+      const dedupedRows = Array.from(
+        new Map(
+          rowsByCourse
+            .flat()
+            .map((row) => [String(row.canvas_file_id), row] as const),
+        ).values(),
+      );
+
+      setMapperRows(dedupedRows);
+
+      if (dedupedRows.length === 0) {
+        toast.info('No files found across all target courses');
+        return;
+      }
+
+      await runMapperSequentially(dedupedRows, 'Global content mapping complete');
+    } catch (e: any) {
+      toast.error('Global content mapping failed', { description: e?.message ?? String(e) });
+    } finally {
+      setMapperLoading(false);
+    }
+  }, [courseOptions, runMapperSequentially]);
 
   const executeMapperRow = useCallback(
     async (row: OrphanFile) => {
@@ -976,6 +1036,19 @@ export default function FileOrganizerPage() {
                   {mapperRunning ? 'Mapping…' : 'Map Course Sequentially'}
                 </Button>
                 <Button
+                  variant="outline"
+                  onClick={mapAllCoursesSequentially}
+                  disabled={mapperRunning || mapperLoading}
+                  className="gap-1.5"
+                >
+                  {mapperRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Layers className="h-3.5 w-3.5" />
+                  )}
+                  Map ALL Courses
+                </Button>
+                <Button
                   variant="default"
                   onClick={executeMapperBulk}
                   disabled={mapperExecuting || mapperRows.length === 0}
@@ -993,7 +1066,7 @@ export default function FileOrganizerPage() {
               {mapperProgress.total > 0 && (
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">
-                    File {mapperProgress.current} of {mapperProgress.total}...
+                    Processing file {mapperProgress.current} of {mapperProgress.total}...
                   </p>
                   <Progress
                     value={Math.round((mapperProgress.current / mapperProgress.total) * 100)}
