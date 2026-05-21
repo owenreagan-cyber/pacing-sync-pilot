@@ -62,6 +62,67 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
   return withoutVerboseSubtitle;
 }
 
+function normalizeSnippetText(text: string, max = 200): string {
+  return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function decodePdfLiteral(input: string): string {
+  return input
+    .replace(/\\([nrtbf()\\])/g, (_, c) => {
+      if (c === "n") return "\n";
+      if (c === "r") return "\r";
+      if (c === "t") return "\t";
+      if (c === "b") return "\b";
+      if (c === "f") return "\f";
+      return c;
+    })
+    .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+}
+
+function extractPdfSnippet(bytes: Uint8Array): string {
+  try {
+    const raw = new TextDecoder("latin1").decode(bytes);
+    const blocks = raw.match(/BT[\s\S]*?ET/g) ?? [];
+    const texts: string[] = [];
+    for (const block of blocks) {
+      const direct = block.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj/g);
+      for (const m of direct) {
+        const value = decodePdfLiteral(m[1] ?? "");
+        if (value) texts.push(value);
+      }
+
+      const arrays = block.matchAll(/\[(.*?)\]\s*TJ/gs);
+      for (const a of arrays) {
+        const inner = a[1] ?? "";
+        const literals = inner.matchAll(/\(((?:\\.|[^\\()])*)\)/g);
+        for (const lit of literals) {
+          const value = decodePdfLiteral(lit[1] ?? "");
+          if (value) texts.push(value);
+        }
+      }
+
+      if (normalizeSnippetText(texts.join(" ")).length >= 200) break;
+    }
+    return normalizeSnippetText(texts.join(" "));
+  } catch {
+    return "";
+  }
+}
+
+function extractFileContentSnippet(bytes: Uint8Array, mime: string): string {
+  if (mime.startsWith("text/") || mime.includes("json") || mime.includes("xml")) {
+    try {
+      return normalizeSnippetText(new TextDecoder("utf-8").decode(bytes));
+    } catch {
+      return "";
+    }
+  }
+  if (mime === "application/pdf") {
+    return extractPdfSnippet(bytes);
+  }
+  return "";
+}
+
 function parseLessonNumber(source: string): number | null {
   const match = source.match(/(?:lesson|chapter)\s*(\d{1,3})/i) || source.match(/\b(\d{1,3})\b/);
   if (!match) return null;
@@ -82,26 +143,26 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   return null;
 }
 
-function applyFolderRules(result: MapperResult, originalName: string): MapperResult {
+function applyFolderRules(result: MapperResult, originalName: string, fileContentSnippet: string): MapperResult {
   const conciseName = canonicalizeSuggestedName(result.suggestedName, originalName);
-  const categorical = categorizeFolder(conciseName, result.resourceType, result.purpose);
-  if (categorical) {
-    return { ...result, suggestedName: conciseName, suggestedFolder: categorical };
-  }
-
-  const source = `${conciseName} ${originalName}`;
+  const source = `${conciseName} ${originalName} ${fileContentSnippet}`.trim();
   const lessonNum = parseLessonNumber(source);
-  if (lessonNum) {
+  if (lessonNum && lessonNum > 20) {
     const start = Math.floor((lessonNum - 1) / 10) * 10 + 1;
     const end = start + 9;
     const lower = source.toLowerCase();
     const isChapter = lower.includes("chapter");
-    const label = isChapter ? "Chapters" : lower.includes("math") ? "Math Lessons" : "Lessons";
+    const label = isChapter ? "Chapters" : "Lessons";
     return {
       ...result,
       suggestedName: conciseName,
       suggestedFolder: `${label} ${start}-${end}`,
     };
+  }
+
+  const categorical = categorizeFolder(conciseName, result.resourceType, result.purpose);
+  if (categorical) {
+    return { ...result, suggestedName: conciseName, suggestedFolder: categorical };
   }
 
   return {
@@ -198,25 +259,30 @@ Deno.serve(async (req) => {
     const buf = new Uint8Array(await fileResp.arrayBuffer());
     const mime = fileResp.headers.get("content-type")?.split(";")[0]?.trim() ||
       mimeFromName(orphan.original_name || "");
+    const extractedSnippet = extractFileContentSnippet(buf, mime);
+    const fileContentSnippet = normalizeSnippetText(extractedSnippet || displayName);
     const base64 = await bytesToBase64(buf);
 
     const prompt = `You are mapping Canvas files for school content operations.
 
 STRICT RULES:
-1) Concise naming only. Strip verbose subtitles.
-   - Return canonical short names only.
-   - Example GOOD: "Saxon Math Book: Lesson 66"
-   - Example BAD: "Saxon Math Intermediate 5: Lesson 66 - Reading a Centimeter Scale"
-2) Intelligent folder chunking rule-of-10 for sequential content:
-   - "Math Lessons 1-10", "Math Lessons 11-20"
-   - "Lessons 1-10", "Chapters 1-10" when appropriate
-3) Categorical folders when applicable:
-   - Investigations, Assessments, Reteaching, Power Ups,
-     Textbooks, Glossaries, Classroom Practices, Answer Keys
-4) Snippet must be a short textual excerpt from the beginning of the visible content and <= 200 chars.
-5) purpose must be an array of concise category tags.
+1) Identify unknowns using fileContentSnippet.
+   - If filename is generic/bad (scan_01, IMG_1234, vendor code), infer true title from snippet.
+2) Friendly naming only.
+   - Strip Canvas/vendor codes and keep names highly readable.
+   - Example GOOD: "Shurley English: Chapter 4"
+   - Example BAD: "scan_01.pdf" or "SM5_INT5_CH4_vendorfinal.pdf"
+3) Rule of 20 for sequence chunking.
+   - If sequence indicates lesson/chapter numbering beyond 20, folder MUST be grouped by tens.
+   - Examples: "Lessons 1-10", "Lessons 11-20", "Chapters 21-30".
+4) Categorical folders when applicable:
+    - Investigations, Assessments, Reteaching, Power Ups,
+      Textbooks, Glossaries, Classroom Practices, Answer Keys
+5) snippet must be fileContentSnippet (or a strict <=200 char variant of it).
+6) purpose must be an array of concise category tags.
 
 Original file name: "${orphan.original_name ?? ""}".
+fileContentSnippet: "${fileContentSnippet}".
 
 Use the classify_mapper_file tool.`;
 
@@ -270,9 +336,10 @@ Use the classify_mapper_file tool.`;
       {
         ...mapped,
         purpose: Array.isArray(mapped.purpose) ? mapped.purpose : ["General"],
-        snippet: String(mapped.snippet ?? "").slice(0, 200),
+        snippet: normalizeSnippetText(fileContentSnippet || mapped.snippet || displayName),
       },
       displayName || orphan.canvas_file_id,
+      fileContentSnippet,
     );
 
     const aiFolderChunked = /\d+\s*-\s*\d+/.test(mapped.suggestedFolder);
