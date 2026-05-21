@@ -9,6 +9,20 @@ export const CANVAS_BASE = RAW_BASE.replace(/\/+$/, '');
 export const IS_DEV_MODE = SYSTEM_MODE === 'DEV';
 
 const WRITE_METHODS = new Set(['PUT', 'POST', 'DELETE', 'PATCH']);
+const RETRYABLE_STATUS_CODES = new Set([429, 503]);
+const MAX_CANVAS_RETRIES = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryDelayMs(attempt: number): number {
+  const base = 1000;
+  const cap = 12000;
+  const expo = Math.min(cap, base * 2 ** attempt);
+  const jitter = Math.floor(Math.random() * 400);
+  return expo + jitter;
+}
 
 /**
  * Mocked OK response used when DEV mode intercepts a Canvas write.
@@ -84,7 +98,7 @@ export interface CanvasFile {
   updated_at?: string;
 }
 
-async function fetchWithRetry(url: string, init?: RequestInit, attempt = 0): Promise<Response> {
+export async function fetchCanvasWithRetry(url: string, init?: RequestInit, attempt = 0): Promise<Response> {
   const method = (init?.method ?? 'GET').toUpperCase();
   if (IS_DEV_MODE && WRITE_METHODS.has(method)) {
     console.log('DEV MODE: Canvas Write Aborted', { method, url });
@@ -98,10 +112,9 @@ async function fetchWithRetry(url: string, init?: RequestInit, attempt = 0): Pro
       ...(init?.headers ?? {}),
     },
   });
-  if ((res.status === 429 || res.status >= 500) && attempt < 3) {
-    const wait = [1000, 4000, 12000][attempt];
-    await new Promise((r) => setTimeout(r, wait));
-    return fetchWithRetry(url, init, attempt + 1);
+  if (RETRYABLE_STATUS_CODES.has(res.status) && attempt < MAX_CANVAS_RETRIES) {
+    await sleep(getRetryDelayMs(attempt));
+    return fetchCanvasWithRetry(url, init, attempt + 1);
   }
   return res;
 }
@@ -122,7 +135,7 @@ export async function fetchPaginated<T>(path: string): Promise<T[]> {
   const out: T[] = [];
   let safety = 0;
   while (url && safety < 50) {
-    const res = await fetchWithRetry(url);
+    const res = await fetchCanvasWithRetry(url);
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Canvas GET ${url} -> ${res.status}: ${body.slice(0, 200)}`);
@@ -137,7 +150,7 @@ export async function fetchPaginated<T>(path: string): Promise<T[]> {
 
 export async function fetchOne<T>(path: string): Promise<T> {
   const url = `${CANVAS_BASE}/api/v1${path}`;
-  const res = await fetchWithRetry(url);
+  const res = await fetchCanvasWithRetry(url);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Canvas GET ${url} -> ${res.status}: ${body.slice(0, 200)}`);

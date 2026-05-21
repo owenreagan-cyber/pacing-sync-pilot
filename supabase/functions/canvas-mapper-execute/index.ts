@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { fetchCanvasWithRetry } from "../_shared/canvas-api.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,7 +26,7 @@ async function ensureFolder(
   courseId: string,
   folderName: string,
 ): Promise<number | null> {
-  const foldersResp = await fetch(
+  const foldersResp = await fetchCanvasWithRetry(
     `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
@@ -41,7 +42,7 @@ async function ensureFolder(
   );
   if (existing) return existing.id;
 
-  const createResp = await fetch(`${baseUrl}/api/v1/courses/${courseId}/folders`, {
+  const createResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/courses/${courseId}/folders`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ name: folderName, hidden: false }),
@@ -90,7 +91,7 @@ async function executeOne(
       payload.parent_folder_id = targetFolderId;
     }
 
-    const renameResp = await fetch(`${baseUrl}/api/v1/files/${row.canvas_file_id}`, {
+    const renameResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/files/${row.canvas_file_id}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
