@@ -20,12 +20,38 @@ interface ExecuteResult {
   canvasUrl?: string | null;
 }
 
+const MAX_CANVAS_NAME_LENGTH = 120;
+
+function normalizeCanvasFileName(name: string): string {
+  const sanitized = name
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\s._()-]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/\.{2,}/g, ".")
+    .trim();
+  if (!sanitized) return "untitled-file";
+  if (sanitized.length <= MAX_CANVAS_NAME_LENGTH) return sanitized;
+  const dot = sanitized.lastIndexOf(".");
+  if (dot > 0) {
+    const ext = sanitized.slice(dot);
+    const base = sanitized.slice(0, dot).slice(0, Math.max(1, MAX_CANVAS_NAME_LENGTH - ext.length));
+    return `${base}${ext}`;
+  }
+  return sanitized.slice(0, MAX_CANVAS_NAME_LENGTH);
+}
+
 async function ensureFolder(
   baseUrl: string,
   token: string,
   courseId: string,
-  folderName: string,
+  folderPath: string,
 ): Promise<number | null> {
+  const segments = folderPath
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return null;
+
   const foldersResp = await fetchCanvasWithRetry(
     `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100`,
     { headers: { Authorization: `Bearer ${token}` } },
@@ -33,24 +59,39 @@ async function ensureFolder(
 
   if (!foldersResp.ok) return null;
 
-  const folders = await foldersResp.json() as Array<{ id: number; name: string; full_name: string }>;
-  const loweredFolder = folderName.toLowerCase();
-  const existing = folders.find(
-    (f) =>
-      f.name.toLowerCase() === loweredFolder ||
-      f.full_name.toLowerCase().endsWith(`/${loweredFolder}`),
+  const folders = await foldersResp.json() as Array<{ id: number; full_name: string }>;
+  const existingByPath = new Map(
+    folders.map((folder) => [folder.full_name.toLowerCase(), folder.id] as const),
   );
-  if (existing) return existing.id;
 
-  const createResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/courses/${courseId}/folders`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name: folderName, hidden: false }),
-  });
+  let parentFolderId: number | null = null;
+  let currentPath = "";
+  for (const segment of segments) {
+    currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+    const key = currentPath.toLowerCase();
+    const existing = existingByPath.get(key);
+    if (existing) {
+      parentFolderId = existing;
+      continue;
+    }
 
-  if (!createResp.ok) return null;
-  const created = await createResp.json() as { id: number };
-  return created.id;
+    const createResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/courses/${courseId}/folders`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: segment,
+        hidden: false,
+        parent_folder_id: parentFolderId ?? undefined,
+      }),
+    });
+
+    if (!createResp.ok) return parentFolderId;
+    const created = await createResp.json() as { id: number };
+    parentFolderId = created.id;
+    existingByPath.set(key, created.id);
+  }
+
+  return parentFolderId;
 }
 
 async function executeOne(
@@ -71,7 +112,9 @@ async function executeOne(
       return { fileId: item.fileId, ok: false, error: "Orphan file row not found" };
     }
 
-    const suggestedName = String(item.suggestedName ?? row.ai_suggested_name ?? row.original_name ?? "").trim();
+    const suggestedName = normalizeCanvasFileName(
+      String(item.suggestedName ?? row.ai_suggested_name ?? row.original_name ?? "").trim(),
+    );
     const suggestedFolder = String(item.suggestedFolder ?? row.ai_suggested_folder ?? "").trim();
 
     if (!suggestedName) {

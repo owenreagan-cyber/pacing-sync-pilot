@@ -33,6 +33,27 @@ Deno.serve(async (req) => {
       report.fileSync = { error: String(e) };
     }
 
+    // 1b. refresh learned naming/folder patterns
+    try {
+      report.patternTraining = await invokeFn('canvas-pattern-train', {});
+    } catch (e) {
+      report.patternTraining = { error: String(e) };
+    }
+
+    // 1c. nightly dedup pass (mark only; destructive delete is manual)
+    try {
+      report.duplicateScan = await invokeFn('canvas-detect-duplicates', { deleteDuplicates: false });
+    } catch (e) {
+      report.duplicateScan = { error: String(e) };
+    }
+
+    // 1d. folder cleanup dry-run for safe scheduled visibility
+    try {
+      report.folderCleanupDryRun = await invokeFn('canvas-cleanup-folders', { dryRun: true });
+    } catch (e) {
+      report.folderCleanupDryRun = { error: String(e) };
+    }
+
     // 2. repair mappings — verify auto-linked content_map files still exist
     let repaired = 0;
     const { data: maps } = await sb
