@@ -67,6 +67,49 @@ Deno.serve(async (req) => {
     };
 
     const courseBase = `${canvasBase}/api/v1/courses/${courseId}`;
+    const parseNextLink = (linkHeader: string | null): string | null => {
+      if (!linkHeader) return null;
+      const parts = linkHeader.split(",");
+      for (const part of parts) {
+        const match = part.match(/<([^>]+)>;\s*rel="next"/);
+        if (match) return match[1];
+      }
+      return null;
+    };
+    const findPageByExactUrlOrTitle = async (
+      urlSlug: string,
+      exactTitle: string,
+    ): Promise<{ url: string; frontPage: boolean; body: string | null } | null> => {
+      let nextUrl: string | null =
+        `${courseBase}/pages?per_page=100&search_term=${encodeURIComponent(exactTitle)}`;
+      let safety = 0;
+
+      while (nextUrl && safety < 50) {
+        const listRes = await fetchWithRetry(nextUrl, { headers: canvasHeaders });
+        if (!listRes.ok) {
+          const errText = await listRes.text();
+          throw new Error(`Page lookup failed (${listRes.status}): ${errText}`);
+        }
+        const pages = (await listRes.json()) as Array<{ url?: string; title?: string }>;
+        const match = pages.find((p) => p.url === urlSlug || p.title === exactTitle);
+        if (match?.url) {
+          const detailRes = await fetchWithRetry(`${courseBase}/pages/${match.url}`, { headers: canvasHeaders });
+          if (!detailRes.ok) {
+            const detailErr = await detailRes.text();
+            throw new Error(`Page detail lookup failed (${detailRes.status}): ${detailErr}`);
+          }
+          const detail = await detailRes.json();
+          return {
+            url: detail.url || match.url,
+            frontPage: detail.front_page === true,
+            body: detail.body ?? null,
+          };
+        }
+        nextUrl = parseNextLink(listRes.headers.get("link"));
+        safety += 1;
+      }
+      return null;
+    };
 
     // Helper: if Canvas page is a front_page but not published, return the
     // corrective payload that re-asserts published:true. Returns null if no
@@ -154,14 +197,39 @@ Deno.serve(async (req) => {
     let exists = false;
     let isFrontPage = false;
     let existingBody = "";
+    let resolvedPageUrl = pageUrl;
+    let existenceCheckError: string | null = null;
 
     if (getRes.ok) {
       const pageData = await getRes.json();
       exists = true;
       isFrontPage = pageData.front_page === true;
       existingBody = pageData.body || "";
+      resolvedPageUrl = pageData.url || pageUrl;
+    } else if (getRes.status === 404) {
+      const matchedPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
+      if (matchedPage) {
+        exists = true;
+        isFrontPage = matchedPage.frontPage;
+        existingBody = matchedPage.body || "";
+        resolvedPageUrl = matchedPage.url;
+      }
     } else {
-      await getRes.text();
+      existenceCheckError = await getRes.text();
+    }
+
+    if (!exists && existenceCheckError) {
+      await sb.from("deploy_log").insert({
+        week_id: weekId || null,
+        subject: subject || null,
+        action: "page_deploy",
+        status: "ERROR",
+        message: `GET ${getRes.status}: ${existenceCheckError}`,
+      });
+      return new Response(JSON.stringify({ error: existenceCheckError, status: "ERROR" }), {
+        status: 502,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Helper to write the deploy hash back to weeks.page_hashes[subject]
@@ -181,7 +249,7 @@ Deno.serve(async (req) => {
     if (exists && existingBody === bodyHtml) {
       // Even on no-content-change, ensure homepage stays published
       if ((setFrontPage && !isFrontPage) || isFrontPage) {
-        await fetchWithRetry(`${courseBase}/pages/${pageUrl}`, {
+        await fetchWithRetry(`${courseBase}/pages/${resolvedPageUrl}`, {
           method: "PUT",
           headers: canvasHeaders,
           body: JSON.stringify({
@@ -197,13 +265,13 @@ Deno.serve(async (req) => {
         subject: subject || null,
         action: "page_deploy",
         status: "NO_CHANGE",
-        canvas_url: `${canvasBase}/courses/${courseId}/pages/${pageUrl}`,
+        canvas_url: `${canvasBase}/courses/${courseId}/pages/${resolvedPageUrl}`,
         message: "Content unchanged — skipped" + (setFrontPage ? " (set as homepage)" : ""),
       });
 
       return new Response(JSON.stringify({
         status: "NO_CHANGE",
-        canvasUrl: `${canvasBase}/courses/${courseId}/pages/${pageUrl}`,
+        canvasUrl: `${canvasBase}/courses/${courseId}/pages/${resolvedPageUrl}`,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -238,7 +306,7 @@ Deno.serve(async (req) => {
     };
 
     const method = exists ? "PUT" : "POST";
-    const url = exists ? `${courseBase}/pages/${pageUrl}` : `${courseBase}/pages`;
+    const url = exists ? `${courseBase}/pages/${resolvedPageUrl}` : `${courseBase}/pages`;
 
     const res = await fetchWithRetry(url, {
       method,
@@ -271,11 +339,12 @@ Deno.serve(async (req) => {
     }
 
     const result = await res.json();
-    const canvasUrl = `${canvasBase}/courses/${courseId}/pages/${result.url || pageUrl}`;
+    const canonicalPageUrl = result.url || resolvedPageUrl;
+    const canvasUrl = `${canvasBase}/courses/${courseId}/pages/${canonicalPageUrl}`;
 
     // 4. If page was just created (POST), separate PUT to set front_page
     if (!exists && setFrontPage) {
-      const fpRes = await fetchWithRetry(`${courseBase}/pages/${result.url || pageUrl}`, {
+      const fpRes = await fetchWithRetry(`${courseBase}/pages/${canonicalPageUrl}`, {
         method: "PUT",
         headers: canvasHeaders,
         body: JSON.stringify({ wiki_page: { front_page: true, published: true } }),

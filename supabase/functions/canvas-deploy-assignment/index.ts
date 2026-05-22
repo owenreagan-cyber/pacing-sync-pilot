@@ -206,6 +206,40 @@ Deno.serve(async (req) => {
     };
 
     const courseBase = `${canvasBase}/api/v1/courses/${courseId}`;
+    const parseNextLink = (linkHeader: string | null): string | null => {
+      if (!linkHeader) return null;
+      const parts = linkHeader.split(",");
+      for (const part of parts) {
+        const match = part.match(/<([^>]+)>;\s*rel="next"/);
+        if (match) return match[1];
+      }
+      return null;
+    };
+
+    const findAssignmentByExactName = async (
+      exactName: string,
+    ): Promise<{ id: string; htmlUrl: string | null } | null> => {
+      let nextUrl: string | null =
+        `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactName)}`;
+      let safety = 0;
+
+      while (nextUrl && safety < 50) {
+        const listRes = await fetchWithRetry(nextUrl, { headers: canvasHeaders });
+        if (!listRes.ok) {
+          const errText = await listRes.text();
+          throw new Error(`Assignment lookup failed (${listRes.status}): ${errText}`);
+        }
+        const items = (await listRes.json()) as Array<{ id: number; name?: string; html_url?: string | null }>;
+        const match = items.find((item) => item.name === exactName);
+        if (match) {
+          return { id: String(match.id), htmlUrl: match.html_url ?? null };
+        }
+        nextUrl = parseNextLink(listRes.headers.get("link"));
+        safety += 1;
+      }
+
+      return null;
+    };
 
     let groupId: number | null = null;
     if (assignmentGroup) {
@@ -234,6 +268,14 @@ Deno.serve(async (req) => {
         .eq("id", rowId)
         .maybeSingle();
       canvasAssignmentId = row?.canvas_assignment_id || null;
+    }
+    let discoveredAssignmentUrl: string | null = null;
+    if (!canvasAssignmentId) {
+      const existingAssignment = await findAssignmentByExactName(title);
+      if (existingAssignment) {
+        canvasAssignmentId = existingAssignment.id;
+        discoveredAssignmentUrl = existingAssignment.htmlUrl;
+      }
     }
     const isUpdate = !!canvasAssignmentId;
     const method = isUpdate ? "PUT" : "POST";
@@ -273,7 +315,9 @@ Deno.serve(async (req) => {
 
     const result = await res.json();
     const assignmentId = String(result.id);
-    const canvasUrl = `${canvasBase}/courses/${courseId}/assignments/${assignmentId}`;
+    const canvasUrl = result.html_url ||
+      discoveredAssignmentUrl ||
+      `${canvasBase}/courses/${courseId}/assignments/${assignmentId}`;
 
     if (rowId) {
       await sb.from("pacing_rows").update({
