@@ -1,5 +1,6 @@
 // Canvas Files Sync — pulls files from each Canvas course and upserts into `files` + `content_map`.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { fetchCanvasWithRetry } from "../_shared/canvas-api.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +52,63 @@ function generateFriendlyName(subject: string, type: string, lessonNum: string, 
   return `${prefixes[subject] || subject.slice(0, 3).toUpperCase()}${typeSuffix[type] || "_"}${lessonNum.padStart(3, "0")}.${ext}`;
 }
 
+const MAX_CANVAS_NAME_LENGTH = 120;
+
+function sanitizePrefix(prefix: string): string {
+  return prefix.replace(/[^A-Za-z0-9]/g, "");
+}
+
+function sanitizeCanvasFileName(name: string): string {
+  const normalized = name
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\s._()-]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/\.{2,}/g, ".")
+    .trim();
+  if (!normalized) return "untitled-file";
+  if (normalized.length <= MAX_CANVAS_NAME_LENGTH) return normalized;
+  const dot = normalized.lastIndexOf(".");
+  if (dot > 0) {
+    const ext = normalized.slice(dot);
+    const base = normalized.slice(0, dot).slice(0, Math.max(1, MAX_CANVAS_NAME_LENGTH - ext.length));
+    return `${base}${ext}`;
+  }
+  return normalized.slice(0, MAX_CANVAS_NAME_LENGTH);
+}
+
+function generateFriendlyNameWithTemplate(
+  subject: string,
+  type: string,
+  lessonNum: string,
+  ext: string,
+  prefixesFromConfig: Record<string, string> | null,
+  namingTemplate: string | null,
+): string {
+  const defaultPrefixes: Record<string, string> = {
+    Math: "SM5", Reading: "RM4", Spelling: "RM4", "Language Arts": "ELA4",
+    History: "HIS4", Science: "SCI4",
+  };
+  const configuredPrefix = prefixesFromConfig?.[subject];
+  const prefix = sanitizePrefix(configuredPrefix || defaultPrefixes[subject] || subject.slice(0, 3).toUpperCase());
+  const typeSuffix: Record<string, string> = {
+    worksheet: "L", test: "T", study_guide: "SG", answer_key: "AK", resource: "R",
+  };
+  const lessonPadded = lessonNum.padStart(3, "0");
+  const normalizedExt = ext.toLowerCase();
+
+  if (namingTemplate) {
+    const rendered = namingTemplate
+      .replaceAll("{PREFIX}", prefix)
+      .replaceAll("{TYPE}", typeSuffix[type] || "R")
+      .replaceAll("{LESSON}", lessonPadded)
+      .replaceAll("{SUBJECT}", subject.replace(/\s+/g, ""))
+      .replaceAll("{EXT}", normalizedExt);
+    return sanitizeCanvasFileName(rendered);
+  }
+
+  return sanitizeCanvasFileName(`${prefix}_${typeSuffix[type] || "R"}${lessonPadded}.${normalizedExt}`);
+}
+
 function generateSlug(subject: string, type: string, lessonNum: string): string {
   const sub = (subject || "x").toLowerCase().replace(/\s+/g, "-").slice(0, 4);
   const tp = (type || "x").toLowerCase().replace("_", "");
@@ -65,7 +123,7 @@ function lessonRef(type: string, lessonNum: string): string {
 
 async function fetchCanvasFilesPage(baseUrl: string, token: string, courseId: number, page: number): Promise<CanvasFile[]> {
   const url = `${baseUrl}/api/v1/courses/${courseId}/files?per_page=100&page=${page}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const r = await fetchCanvasWithRetry(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) {
     const txt = await r.text();
     throw new Error(`Canvas ${r.status}: ${txt.slice(0, 200)}`);
@@ -94,44 +152,15 @@ interface LearningRuleHit {
   matchKind: "exact" | "pattern";
 }
 
-async function lookupLearningRule(
-  supabase: ReturnType<typeof createClient>,
-  filename: string,
-): Promise<LearningRuleHit | null> {
-  // 1. Exact original_name match (case-insensitive via lower() unique index)
-  const { data: exact } = await supabase
-    .from("learning_rules")
-    .select("id, corrected_subject, corrected_type, corrected_lesson")
-    .ilike("original_name", filename)
-    .maybeSingle();
-  if (exact) {
-    return {
-      subject: exact.corrected_subject,
-      type: exact.corrected_type,
-      lessonNum: exact.corrected_lesson,
-      ruleId: exact.id,
-      matchKind: "exact",
-    };
-  }
-  // 2. Fuzzy pattern match
-  const key = patternKey(filename);
-  const { data: byPattern } = await supabase
-    .from("learning_rules")
-    .select("id, corrected_subject, corrected_type, corrected_lesson")
-    .eq("name_pattern", key)
-    .order("applied_count", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (byPattern) {
-    return {
-      subject: byPattern.corrected_subject,
-      type: byPattern.corrected_type,
-      lessonNum: byPattern.corrected_lesson,
-      ruleId: byPattern.id,
-      matchKind: "pattern",
-    };
-  }
-  return null;
+interface LearningRuleCache {
+  exact: Map<string, LearningRuleHit>;
+  pattern: Map<string, LearningRuleHit>;
+}
+
+function lookupLearningRule(cache: LearningRuleCache, filename: string): LearningRuleHit | null {
+  const exact = cache.exact.get(filename.toLowerCase());
+  if (exact) return exact;
+  return cache.pattern.get(patternKey(filename)) ?? null;
 }
 
 /**
@@ -209,10 +238,54 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     // Read course IDs from system_config
-    const { data: cfg } = await supabase.from("system_config").select("course_ids").eq("id", "current").maybeSingle();
+    const { data: cfg } = await supabase
+      .from("system_config")
+      .select("course_ids,assignment_prefixes,auto_logic")
+      .eq("id", "current")
+      .maybeSingle();
     const courseIds: Record<string, number> = cfg?.course_ids ?? {};
+    const assignmentPrefixes: Record<string, string> = cfg?.assignment_prefixes ?? {};
+    const namingTemplates =
+      (cfg?.auto_logic as { file_naming_templates?: Record<string, string> } | null)?.file_naming_templates ?? {};
     const subjectByCourse = new Map<number, string>();
     for (const [subject, id] of Object.entries(courseIds)) subjectByCourse.set(id, subject);
+
+    const { data: allRules } = await supabase
+      .from("learning_rules")
+      .select("id, original_name, name_pattern, corrected_subject, corrected_type, corrected_lesson, applied_count");
+
+    const ruleCache: LearningRuleCache = { exact: new Map(), pattern: new Map() };
+    const patternScore = new Map<string, number>();
+    for (const row of allRules ?? []) {
+      const hit: LearningRuleHit = {
+        subject: row.corrected_subject,
+        type: row.corrected_type,
+        lessonNum: row.corrected_lesson,
+        ruleId: row.id,
+        matchKind: "exact",
+      };
+      ruleCache.exact.set(String(row.original_name).toLowerCase(), hit);
+      if (row.name_pattern) {
+        const nextScore = Number(row.applied_count ?? 0);
+        const currentScore = patternScore.get(row.name_pattern) ?? -1;
+        if (nextScore >= currentScore) {
+          ruleCache.pattern.set(row.name_pattern, { ...hit, matchKind: "pattern" });
+          patternScore.set(row.name_pattern, nextScore);
+        }
+      }
+    }
+
+    const { data: existingLessonRows } = await supabase
+      .from("files")
+      .select("subject,type,lesson_num")
+      .not("lesson_num", "is", null);
+    const lessonCounter = new Map<string, number>();
+    for (const row of existingLessonRows ?? []) {
+      const parsed = Number(String(row.lesson_num ?? "").replace(/\D+/g, ""));
+      if (!Number.isFinite(parsed) || parsed <= 0) continue;
+      const key = `${row.subject ?? "unknown"}|${row.type ?? "resource"}`;
+      lessonCounter.set(key, Math.max(parsed, lessonCounter.get(key) ?? 0));
+    }
 
     const stats = { synced: 0, classified: 0, mapped: 0, needsReview: 0, perCourse: {} as Record<string, number> };
     const now = new Date().toISOString();
@@ -250,31 +323,39 @@ Deno.serve(async (req) => {
           let slug: string | null = null;
 
           // 1) Learning-rules first
-          const rule = await lookupLearningRule(supabase, displayName);
+          const rule = lookupLearningRule(ruleCache, displayName);
           if (rule && (rule.subject || rule.type || rule.lessonNum)) {
             subject = rule.subject ?? subject;
             type = rule.type ?? null;
             lessonNum = rule.lessonNum ?? null;
             confidence = `learned_${rule.matchKind}`;
-            if (subject && type) {
-              friendly = generateFriendlyName(subject, type, lessonNum ?? "", ext);
+            if (subject && type && !lessonNum) {
+              const key = `${subject}|${type}`;
+              const next = (lessonCounter.get(key) ?? 0) + 1;
+              lessonCounter.set(key, next);
+              lessonNum = String(next);
+            }
+            if (subject && type && lessonNum) {
+              const template = namingTemplates[`${subject}:${type}`] ?? namingTemplates[type] ?? namingTemplates.default ?? null;
+              friendly = generateFriendlyNameWithTemplate(subject, type, lessonNum, ext, assignmentPrefixes, template);
               slug = generateSlug(subject, type, lessonNum ?? "");
             }
             stats.classified++;
-            // Bump usage count (fire and forget, single round-trip)
-            supabase
-              .from("learning_rules")
-              .update({ last_applied: now })
-              .eq("id", rule.ruleId)
-              .then(() => {});
           } else if (cls) {
             // 2) Regex match
             subject = cls.subject;
             type = cls.type;
             lessonNum = cls.lessonNum || null;
+            if (!lessonNum) {
+              const key = `${subject}|${type}`;
+              const next = (lessonCounter.get(key) ?? 0) + 1;
+              lessonCounter.set(key, next);
+              lessonNum = String(next);
+            }
             confidence = "regex";
-            friendly = generateFriendlyName(cls.subject, cls.type, cls.lessonNum, ext);
-            slug = generateSlug(cls.subject, cls.type, cls.lessonNum);
+            const template = namingTemplates[`${subject}:${type}`] ?? namingTemplates[type] ?? namingTemplates.default ?? null;
+            friendly = generateFriendlyNameWithTemplate(subject, type, lessonNum, ext, assignmentPrefixes, template);
+            slug = generateSlug(subject, type, lessonNum);
             stats.classified++;
           }
           // 3) Gemini fallback removed from sync hot path — nightly job handles it.
@@ -298,18 +379,18 @@ Deno.serve(async (req) => {
             { onConflict: "drive_file_id" },
           );
 
-          if (cls && lessonNum) {
-            const ref = lessonRef(cls.type, lessonNum);
+          if (subject && type && lessonNum) {
+           const ref = lessonRef(type, lessonNum);
             await supabase.from("content_map").upsert(
               {
-                subject: cls.subject,
+               subject,
                 lesson_ref: ref,
-                type: cls.type,
+               type,
                 slug,
                 canonical_name: friendly,
                 canvas_file_id: String(f.id),
                 canvas_url: f.url,
-                confidence: "regex",
+               confidence,
                 auto_linked: true,
                 last_synced: now,
                 updated_at: now,
