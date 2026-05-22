@@ -45,6 +45,7 @@ import {
   totalPages,
   type BatchJobProgress,
 } from '@/lib/file-utils';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface OrphanFile {
   canvas_file_id: string;
@@ -79,7 +80,6 @@ interface MapperResult {
 
 const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const MAPPER_MAX_CONCURRENCY = 5;
-const MAPPER_TABLE_PAGE_SIZE = 20;
 const EXECUTE_CHUNK_SIZE = 25;
 const PAUSE_POLL_MS = 150;
 
@@ -125,9 +125,9 @@ export default function FileOrganizerPage() {
   const [mapperPaused, setMapperPaused] = useState(false);
   const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
-  const [mapperTablePage, setMapperTablePage] = useState(1);
   const mapperPausedRef = useRef(false);
   const mapperCancelRequestedRef = useRef(false);
+  const mapperTableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const selected = files.find((f) => f.canvas_file_id === selectedId) ?? null;
   const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
@@ -135,8 +135,18 @@ export default function FileOrganizerPage() {
     ? paginate(files, currentPage, PAGE_SIZE)
     : files;
   const numPages = isBatchMode ? totalPages(files.length, PAGE_SIZE) : 1;
-  const mapperTablePages = totalPages(mapperRows.length, MAPPER_TABLE_PAGE_SIZE);
-  const visibleMapperRows = paginate(mapperRows, mapperTablePage, MAPPER_TABLE_PAGE_SIZE);
+  const mapperRowVirtualizer = useVirtualizer({
+    count: mapperRows.length,
+    getScrollElement: () => mapperTableContainerRef.current,
+    estimateSize: () => 112,
+    overscan: 8,
+  });
+  const virtualMapperRows = mapperRowVirtualizer.getVirtualItems();
+  const mapperPaddingTop = virtualMapperRows.length > 0 ? virtualMapperRows[0].start : 0;
+  const mapperPaddingBottom =
+    virtualMapperRows.length > 0
+      ? mapperRowVirtualizer.getTotalSize() - virtualMapperRows[virtualMapperRows.length - 1].end
+      : 0;
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -190,7 +200,6 @@ export default function FileOrganizerPage() {
       toast.error('Failed to load course files', { description: error.message });
     } else {
       setMapperRows((data ?? []) as OrphanFile[]);
-      setMapperTablePage(1);
     }
     setMapperLoading(false);
   }, [mapperCourseId]);
@@ -530,12 +539,6 @@ export default function FileOrganizerPage() {
   useEffect(() => {
     mapperCancelRequestedRef.current = mapperCancelRequested;
   }, [mapperCancelRequested]);
-
-  useEffect(() => {
-    if (mapperTablePage > mapperTablePages) {
-      setMapperTablePage(mapperTablePages);
-    }
-  }, [mapperTablePage, mapperTablePages]);
 
   // Poll for batch progress while running
   useEffect(() => {
@@ -1219,144 +1222,142 @@ export default function FileOrganizerPage() {
 
           <Card>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Current Name</TableHead>
-                    <TableHead>Snippet</TableHead>
-                    <TableHead>Resource Type</TableHead>
-                    <TableHead>Purpose Array</TableHead>
-                    <TableHead>Suggested Name/Folder</TableHead>
-                    <TableHead>View File</TableHead>
-                    <TableHead className="w-[150px]">Apply</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mapperLoading ? (
+              <div ref={mapperTableContainerRef} className="h-[560px] overflow-y-auto">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        Loading...
-                      </TableCell>
+                      <TableHead>Current Name</TableHead>
+                      <TableHead>Snippet</TableHead>
+                      <TableHead>Resource Type</TableHead>
+                      <TableHead>Purpose Array</TableHead>
+                      <TableHead>Suggested Name/Folder</TableHead>
+                      <TableHead>View File</TableHead>
+                      <TableHead className="w-[150px]">Apply</TableHead>
                     </TableRow>
-                  ) : mapperRows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        No files loaded for this course.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    visibleMapperRows.map((row) => (
-                      <TableRow key={row.canvas_file_id}>
-                        <TableCell className="max-w-[260px]">
-                          <div className="truncate font-mono text-xs">
-                            {row.original_name ?? row.canvas_file_id}
-                          </div>
-                        </TableCell>
-                        <TableCell className="max-w-[280px]">
-                          <div className="text-xs text-muted-foreground line-clamp-3">
-                            {row.ai_snippet ?? '—'}
-                          </div>
-                        </TableCell>
-                        <TableCell>{row.ai_resource_type ?? '—'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 flex-wrap">
-                            {(row.ai_purpose ?? []).map((p) => (
-                              <Badge key={`${row.canvas_file_id}-${p}`} variant="outline" className="text-[10px]">
-                                {p}
-                              </Badge>
-                            ))}
-                            {(row.ai_purpose ?? []).length === 0 && <span className="text-xs text-muted-foreground">—</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="space-y-1 min-w-[230px]">
-                          <Input
-                            value={row.ai_suggested_name ?? ''}
-                            onChange={(e) =>
-                              updateMapperRowField(row.canvas_file_id, {
-                                ai_suggested_name: e.target.value,
-                              })
-                            }
-                            placeholder="Suggested name"
-                            className="h-8 text-xs font-mono"
-                          />
-                          <Input
-                            value={row.ai_suggested_folder ?? ''}
-                            onChange={(e) =>
-                              updateMapperRowField(row.canvas_file_id, {
-                                ai_suggested_folder: e.target.value,
-                              })
-                            }
-                            placeholder="Suggested folder"
-                            className="h-8 text-xs"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {row.canvas_url ? (
-                            <a
-                              className="text-xs underline inline-flex items-center gap-1"
-                              href={row.canvas_url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              View File
-                            </a>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            onClick={() => executeMapperRow(row)}
-                            disabled={
-                              mapperRunning ||
-                              mapperExecuting ||
-                              rowExecutingId === row.canvas_file_id ||
-                              !row.ai_suggested_name?.trim()
-                            }
-                            className="gap-1.5"
-                          >
-                            {rowExecutingId === row.canvas_file_id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                            )}
-                            Apply to Canvas
-                          </Button>
+                  </TableHeader>
+                  <TableBody>
+                    {mapperLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          Loading...
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : mapperRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          No files loaded for this course.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      <>
+                        {mapperPaddingTop > 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} style={{ height: `${mapperPaddingTop}px`, padding: 0 }} />
+                          </TableRow>
+                        )}
+                        {virtualMapperRows.map((virtualRow) => {
+                          const row = mapperRows[virtualRow.index];
+                          if (!row) return null;
+                          return (
+                            <TableRow key={row.canvas_file_id}>
+                              <TableCell className="max-w-[260px]">
+                                <div className="truncate font-mono text-xs">
+                                  {row.original_name ?? row.canvas_file_id}
+                                </div>
+                              </TableCell>
+                              <TableCell className="max-w-[280px]">
+                                <div className="text-xs text-muted-foreground line-clamp-3">
+                                  {row.ai_snippet ?? '—'}
+                                </div>
+                              </TableCell>
+                              <TableCell>{row.ai_resource_type ?? '—'}</TableCell>
+                              <TableCell>
+                                <div className="flex gap-1 flex-wrap">
+                                  {(row.ai_purpose ?? []).map((p) => (
+                                    <Badge key={`${row.canvas_file_id}-${p}`} variant="outline" className="text-[10px]">
+                                      {p}
+                                    </Badge>
+                                  ))}
+                                  {(row.ai_purpose ?? []).length === 0 && (
+                                    <span className="text-xs text-muted-foreground">—</span>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="space-y-1 min-w-[230px]">
+                                <Input
+                                  value={row.ai_suggested_name ?? ''}
+                                  onChange={(e) =>
+                                    updateMapperRowField(row.canvas_file_id, {
+                                      ai_suggested_name: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Suggested name"
+                                  className="h-8 text-xs font-mono"
+                                />
+                                <Input
+                                  value={row.ai_suggested_folder ?? ''}
+                                  onChange={(e) =>
+                                    updateMapperRowField(row.canvas_file_id, {
+                                      ai_suggested_folder: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Suggested folder"
+                                  className="h-8 text-xs"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                {row.canvas_url ? (
+                                  <a
+                                    className="text-xs underline inline-flex items-center gap-1"
+                                    href={row.canvas_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    View File
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  onClick={() => executeMapperRow(row)}
+                                  disabled={
+                                    mapperRunning ||
+                                    mapperExecuting ||
+                                    rowExecutingId === row.canvas_file_id ||
+                                    !row.ai_suggested_name?.trim()
+                                  }
+                                  className="gap-1.5"
+                                >
+                                  {rowExecutingId === row.canvas_file_id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  )}
+                                  Apply to Canvas
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {mapperPaddingBottom > 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} style={{ height: `${mapperPaddingBottom}px`, padding: 0 }} />
+                          </TableRow>
+                        )}
+                      </>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
               {mapperRows.length > 0 && (
-                <div className="px-4 py-3 border-t flex items-center justify-between">
+                <div className="px-4 py-3 border-t">
                   <p className="text-xs text-muted-foreground">
-                    Page {mapperTablePage} of {mapperTablePages} · showing {visibleMapperRows.length} of {mapperRows.length} file(s)
+                    Rendering {virtualMapperRows.length} of {mapperRows.length} file(s) in viewport
                   </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setMapperTablePage((p) => Math.max(1, p - 1))}
-                      disabled={mapperTablePage <= 1}
-                      className="h-7 text-xs gap-1"
-                    >
-                      <ChevronLeft className="h-3 w-3" />
-                      Prev
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setMapperTablePage((p) => Math.min(mapperTablePages, p + 1))}
-                      disabled={mapperTablePage >= mapperTablePages}
-                      className="h-7 text-xs gap-1"
-                    >
-                      Next
-                      <ChevronRight className="h-3 w-3" />
-                    </Button>
-                  </div>
                 </div>
               )}
             </CardContent>
