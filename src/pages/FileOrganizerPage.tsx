@@ -408,7 +408,6 @@ export default function FileOrganizerPage() {
       );
 
       setMapperRows(dedupedRows);
-      setMapperTablePage(1);
 
       if (dedupedRows.length === 0) {
         toast.info('No files found across all target courses');
@@ -502,7 +501,6 @@ export default function FileOrganizerPage() {
 
       setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
       setFiles((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
-      setMapperTablePage(1);
       toast.success('Bulk rename & move complete', {
         description: `${succeededIds.size} file(s) applied`,
       });
