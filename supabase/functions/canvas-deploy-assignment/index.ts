@@ -37,6 +37,28 @@ function toDueAt(dateStr: string): string {
   return local.toISOString();
 }
 
+type MatrixPayloadConfig = {
+  pointsPossible: number;
+  gradingType: 'percent' | 'pass_fail';
+  omitFromFinalGrade: boolean;
+};
+
+function resolveMatrixPayloadConfig(subject: string, type: string): MatrixPayloadConfig {
+  if (subject === 'Math' && type === 'Study Guide') {
+    return {
+      pointsPossible: 0,
+      gradingType: 'pass_fail',
+      omitFromFinalGrade: true,
+    };
+  }
+
+  return {
+    pointsPossible: 100,
+    gradingType: 'percent',
+    omitFromFinalGrade: false,
+  };
+}
+
 async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
   let lastErr: Error | null = null;
   for (let i = 0; i < attempts; i++) {
@@ -64,15 +86,24 @@ Deno.serve(async (req) => {
 
   try {
     const {
-      subject, courseId, title, description, points, gradingType,
+      subject, courseId, title, description,
       assignmentGroup, dueDate, existingId, rowId, weekId,
-      omitFromFinal, contentHash,
+      contentHash,
       day, type, isSynthetic,
       force,
     } = await req.json();
 
-    if (!courseId || !title) {
+    const normalizedTitle = typeof title === "string" ? title.trim() : "";
+
+    if (!courseId || !normalizedTitle) {
       return new Response(JSON.stringify({ error: "Missing courseId or title" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!subject || !type || !dueDate) {
+      return new Response(JSON.stringify({ error: "Missing required matrix fields: subject, type, dueDate" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -216,11 +247,11 @@ Deno.serve(async (req) => {
       return null;
     };
 
-    const findAssignmentByExactName = async (
-      exactName: string,
+    const findAssignmentByExactTitle = async (
+      exactTitle: string,
     ): Promise<{ id: string; htmlUrl: string | null } | null> => {
       let nextUrl: string | null =
-        `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactName)}`;
+        `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactTitle)}`;
       let safety = 0;
 
       while (nextUrl && safety < 50) {
@@ -230,7 +261,7 @@ Deno.serve(async (req) => {
           throw new Error(`Assignment lookup failed (${listRes.status}): ${errText}`);
         }
         const items = (await listRes.json()) as Array<{ id: number; name?: string; html_url?: string | null }>;
-        const match = items.find((item) => item.name === exactName);
+        const match = items.find((item) => item.name === exactTitle);
         if (match) {
           return { id: String(match.id), htmlUrl: match.html_url ?? null };
         }
@@ -253,17 +284,19 @@ Deno.serve(async (req) => {
     if (assignmentGroup) {
       groupId = await resolveGroupId(courseBase, canvasHeaders, assignmentGroup);
     }
+    const matrixConfig = resolveMatrixPayloadConfig(subject, type);
 
     const payload: Record<string, unknown> = {
       assignment: {
-        name: title,
+        name: normalizedTitle,
         description: description || "",
-        points_possible: points ?? 100,
-        grading_type: gradingType || "points",
+        points_possible: matrixConfig.pointsPossible,
+        grading_type: matrixConfig.gradingType,
+        submission_types: ["on_paper"],
+        omit_from_final_grade: matrixConfig.omitFromFinalGrade,
+        due_at: toDueAt(dueDate),
         published: true,
         ...(groupId ? { assignment_group_id: groupId } : {}),
-        ...(dueDate ? { due_at: toDueAt(dueDate) } : {}),
-        ...(omitFromFinal ? { omit_from_final_grade: true } : {}),
       },
     };
 
@@ -284,8 +317,9 @@ Deno.serve(async (req) => {
         canvasAssignmentId = null;
       }
     }
+    // Upsert guard: before creating (POST), query Canvas by the target title.
     if (!canvasAssignmentId) {
-      const existingAssignment = await findAssignmentByExactName(title);
+      const existingAssignment = await findAssignmentByExactTitle(normalizedTitle);
       if (existingAssignment) {
         canvasAssignmentId = existingAssignment.id;
         discoveredAssignmentUrl = existingAssignment.htmlUrl;

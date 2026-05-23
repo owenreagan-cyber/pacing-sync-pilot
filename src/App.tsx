@@ -28,6 +28,7 @@ import CanvasBrainPage from '@/pages/CanvasBrainPage';
 import CanvasAuditorPage from '@/pages/CanvasAuditorPage';
 import WeekVerifierPage from '@/pages/WeekVerifierPage';
 import MasterPacingPage from '@/pages/MasterPacingPage';
+import DeploymentWizardPage from '@/pages/DeploymentWizardPage';
 import NotFound from '@/pages/NotFound';
 
 const queryClient = new QueryClient();
@@ -192,6 +193,7 @@ function AppContent({ config }: { config: AppConfig }) {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/memory" element={<MemoryPage />} />
           <Route path="/automation" element={<AutomationPage />} />
+          <Route path="/deployment-wizard" element={<DeploymentWizardPage />} />
           <Route path="/canvas-brain" element={<CanvasBrainPage />} />
           <Route path="/canvas-auditor" element={<CanvasAuditorPage />} />
           <Route path="/week-verifier" element={<WeekVerifierPage />} />

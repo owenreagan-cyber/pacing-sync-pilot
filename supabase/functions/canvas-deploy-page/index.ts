@@ -205,15 +205,7 @@ Deno.serve(async (req) => {
       isFrontPage = pageData.front_page === true;
       existingBody = pageData.body || "";
       resolvedPageUrl = pageData.url || pageUrl;
-    } else if (getRes.status === 404) {
-      const matchedPage = await findPageByExactTitle(pageTitle);
-      if (matchedPage) {
-        exists = true;
-        isFrontPage = matchedPage.frontPage;
-        existingBody = matchedPage.body || "";
-        resolvedPageUrl = matchedPage.url;
-      }
-    } else {
+    } else if (getRes.status !== 404) {
       existenceCheckError = await getRes.text();
     }
 
@@ -231,15 +223,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Explicit upsert guard: if we would POST, first check for an existing page
-    // with the exact target title and switch to PUT when found.
+    // Upsert guard: before creating (POST), query Canvas by the target title.
     if (!exists) {
-      const matchedByTitle = await findPageByExactTitle(pageTitle);
-      if (matchedByTitle) {
+      const matchedPage = await findPageByExactTitle(pageTitle);
+      if (matchedPage) {
         exists = true;
-        isFrontPage = matchedByTitle.frontPage;
-        existingBody = matchedByTitle.body || "";
-        resolvedPageUrl = matchedByTitle.url;
+        isFrontPage = matchedPage.frontPage;
+        existingBody = matchedPage.body || "";
+        resolvedPageUrl = matchedPage.url;
       }
     }
 

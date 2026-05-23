@@ -79,6 +79,29 @@ describe('FPK compliance', () => {
     expect(result.issues.some((i) => i.code === 'CROSS_COURSE_LEAK')).toBe(true);
   });
 
+  it('fails validation for worst-case malformed HTML', () => {
+    const malformedHtml = `
+      <div id="kl_banner"></div>
+      <div id="kl_custom_block_0">
+        <div id="kl_custom_block_3">
+          <a href="https://thalesacademy.instructure.com/courses/99999/assignments/1">bad</a>
+        </div>
+      </div>
+      <div id="kl_custom_block_5"></div>
+      <div id="kl_custom_block_4"></div>
+      <div id="kl_custom_block_6"></div>
+      <div id="kl_custom_block_2"></div>
+      <div id="kl_custom_block_1">Enough visible text to avoid empty page validation errors in this test.</div>
+    `;
+    const result = validateFpkPage(malformedHtml, 'Math');
+    expect(result.pass).toBe(false);
+    expect(
+      result.issues.some(
+        (i) => i.severity === 'critical' && (i.code === 'MISSING_BLOCK' || i.code === 'WRONG_NESTING'),
+      ),
+    ).toBe(true);
+  });
+
   it("LA CP title is 'ELA4: Shurley English Classroom Practice 52'", () => {
     expect(generateAssignmentTitle('Language Arts', 'CP', '52', 'ELA4:')).toBe('ELA4: Shurley English Classroom Practice 52');
   });
@@ -87,5 +110,58 @@ describe('FPK compliance', () => {
     const { loadConfig } = await import('@/lib/config');
     const config = await loadConfig();
     expect(config.assignmentPrefixes.Math).toBe('SM5:');
+  });
+
+  it('renders Reading pages as combined Reading and Spelling daily blocks', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading & Spelling',
+      rows: [
+        { day: 'Monday', type: null, lesson_num: '11', in_class: 'Reading Lesson 11', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Monday', type: null, lesson_num: '11', in_class: 'Spelling Lesson 11', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Spelling', resources: null },
+      ],
+      quarter: 'Q1',
+      weekNum: 1,
+      dateRange: 'Sept 1-5',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+    });
+
+    expect(html).toContain('<div id="kl_custom_block_3" class="">');
+    expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 11</p>');
+    expect(html).toContain('<p><strong>Spelling:</strong> Spelling Lesson 11</p>');
+    expect(html).not.toContain('<strong>In Class</strong>');
+    expect(html).not.toContain('<strong>At Home</strong>');
+  });
+
+  it('falls back to contentMap for missing daily Spelling content on Reading pages', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading',
+      rows: [
+        { day: 'Monday', type: null, lesson_num: '12', in_class: 'Reading Lesson 12', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+      ],
+      quarter: 'Q1',
+      weekNum: 1,
+      dateRange: 'Sept 1-5',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: [
+        { subject: 'Spelling', lesson_ref: 'Spelling Lesson 12', canonical_name: 'Spelling Lesson 12', canvas_url: 'https://x/courses/1/files/sp12' },
+      ],
+    });
+
+    expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 12</p>');
+    expect(html).toContain('<p><strong>Spelling:</strong> <a href="https://x/courses/1/files/sp12"');
+    expect(html).toContain('Spelling Lesson 12</a></p>');
+  });
+
+  it('keeps non-Reading subjects on the existing isolated layout', () => {
+    const html = buildHtml();
+
+    expect(html).toContain('<strong>In Class</strong>');
+    expect(html).toContain('<strong>Homework</strong>');
+    expect(html).not.toContain('<p><strong>Reading:</strong>');
+    expect(html).not.toContain('<p><strong>Spelling:</strong>');
   });
 });

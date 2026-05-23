@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-2.0-flash-001',
         messages: [
           {
             role: 'system',
