@@ -376,7 +376,7 @@ export default function FileOrganizerPage() {
 
     setMapperLoading(true);
     try {
-      const rowsByCourse = await Promise.all(
+      const rowsByCourse = await Promise.allSettled(
         selectedCourses.map(async (opt) => {
           const { data, error } = await supabase
             .from('canvas_orphan_files')
@@ -389,10 +389,20 @@ export default function FileOrganizerPage() {
         }),
       );
 
+      const failedCourses = rowsByCourse
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => String(result.reason?.message ?? result.reason ?? 'Unknown error'));
+      if (failedCourses.length > 0) {
+        toast.warning('Some courses failed to load', {
+          description: failedCourses.slice(0, 3).join(' • '),
+        });
+      }
+
       const dedupedRows = Array.from(
         new Map(
           rowsByCourse
-            .flat()
+            .filter((result): result is PromiseFulfilledResult<OrphanFile[]> => result.status === 'fulfilled')
+            .flatMap((result) => result.value)
             .map((row) => [String(row.canvas_file_id), row] as const),
         ).values(),
       );
@@ -593,16 +603,23 @@ export default function FileOrganizerPage() {
 
       const suggested = (data as any)?.suggested_name ?? '';
       const lessonRef = (data as any)?.ai_lesson_ref ?? '';
+      const suggestedFolder = (data as any)?.suggestedFolder ?? (data as any)?.ai_suggested_folder ?? null;
       setEditName(suggested);
       setEditLessonRef(lessonRef);
       setFiles((prev) =>
         prev.map((f) =>
           f.canvas_file_id === selected.canvas_file_id
-            ? { ...f, ai_suggested_name: suggested, ai_lesson_ref: lessonRef }
+            ? { ...f, ai_suggested_name: suggested, ai_lesson_ref: lessonRef, ai_suggested_folder: suggestedFolder }
             : f,
         ),
       );
-      toast.success('AI analysis complete');
+      if (String(suggestedFolder ?? '').trim().toLowerCase() === 'needs visual review') {
+        toast.warning('AI analysis requires manual review', {
+          description: 'Suggested folder is "Needs Visual Review".',
+        });
+      } else {
+        toast.success('AI analysis complete');
+      }
     } catch (e: any) {
       toast.error('Analyze failed', { description: e?.message ?? String(e) });
     } finally {
@@ -911,6 +928,8 @@ export default function FileOrganizerPage() {
                             className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
                               isActive
                                 ? 'border-primary bg-primary/10'
+                                : String(f.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
+                                  ? 'border-amber-400/70 bg-amber-50 hover:bg-amber-100'
                                 : f.is_duplicate
                                   ? 'border-destructive/60 bg-destructive/5 hover:bg-destructive/10'
                                   : 'border-border hover:bg-muted/60'
@@ -1259,7 +1278,14 @@ export default function FileOrganizerPage() {
                           const row = mapperRows[virtualRow.index];
                           if (!row) return null;
                           return (
-                            <TableRow key={row.canvas_file_id}>
+                            <TableRow
+                              key={row.canvas_file_id}
+                              className={
+                                String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
+                                  ? 'bg-amber-50/70'
+                                  : undefined
+                              }
+                            >
                               <TableCell className="max-w-[260px]">
                                 <div className="truncate font-mono text-xs">
                                   {row.original_name ?? row.canvas_file_id}
