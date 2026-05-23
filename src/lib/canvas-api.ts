@@ -10,26 +10,14 @@
  * This client-side guard catches any direct browser → Canvas calls.
  */
 
+import { fetchWithRetry } from './retry-fetch';
+
 const SYSTEM_MODE =
   (import.meta.env.VITE_SYSTEM_MODE as string | undefined)?.toUpperCase() ?? 'LIVE';
 
 export const IS_DEV_MODE = SYSTEM_MODE === 'DEV';
 
 const WRITE_METHODS = new Set(['PUT', 'POST', 'DELETE', 'PATCH']);
-const RETRYABLE_STATUS_CODES = new Set([429, 503]);
-const MAX_CANVAS_RETRIES = 3;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getRetryDelayMs(attempt: number): number {
-  const base = 1000;
-  const cap = 12000;
-  const expo = Math.min(cap, base * 2 ** attempt);
-  const jitter = Math.floor(Math.random() * 400);
-  return expo + jitter;
-}
 
 export interface MockedCanvasResponse {
   ok: true;
@@ -40,7 +28,8 @@ export interface MockedCanvasResponse {
 
 /**
  * Wrap any fetch() call to Canvas. In DEV mode, write methods are aborted
- * silently and return a mocked OK response.
+ * silently and return a mocked OK response. All real requests funnel
+ * through the shared `fetchWithRetry` primitive (see src/lib/retry-fetch.ts).
  */
 export async function canvasFetch(
   url: string,
@@ -52,21 +41,6 @@ export async function canvasFetch(
     console.log('DEV MODE: Canvas Write Aborted', { method, url });
     return { ok: true, status: 200, mocked: true, mode: 'DEV' };
   }
-  const response = await fetch(url, init);
-  if (!RETRYABLE_STATUS_CODES.has(response.status)) {
-    return response;
-  }
-
-  for (let attempt = 0; attempt < MAX_CANVAS_RETRIES; attempt += 1) {
-    await sleep(getRetryDelayMs(attempt));
-    const retryResponse = await fetch(url, init);
-    if (!RETRYABLE_STATUS_CODES.has(retryResponse.status)) {
-      return retryResponse;
-    }
-    if (attempt === MAX_CANVAS_RETRIES - 1) {
-      return retryResponse;
-    }
-  }
-
-  return response;
+  return fetchWithRetry(url, init);
 }
+
