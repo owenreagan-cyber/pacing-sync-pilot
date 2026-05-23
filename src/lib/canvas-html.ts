@@ -251,7 +251,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     if (!raw) return '';
     let txt = stripLessonTitle(raw, 'Spelling');
     txt = injectFileLinks(txt, contentMap, 'Spelling');
-    if (entry.canvas_url) {
+    if (entry.canvas_url && !txt.includes('<a ')) {
       return `<a href="${entry.canvas_url}" target="_blank" style="color: inherit; text-decoration: underline;">${txt}</a>`;
     }
     return txt;
