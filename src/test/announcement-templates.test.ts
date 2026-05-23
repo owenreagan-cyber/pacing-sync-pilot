@@ -22,8 +22,21 @@ describe('announcement templates', () => {
     expect(html).toContain('Good afternoon, families');
     expect(html).toContain('40 Division facts');
     expect(html).toContain('Study Guide (Blank)');
-    expect(html).toContain('Study Guide (Answer Key)');
+    expect(html).toContain('Study Guide (Completed)');
     expect(html).toContain('Owen Reagan');
+  });
+
+  it('renders math test with Power Up attachment explicitly mentioned', () => {
+    const html = renderMathTestBody({
+      lesson: '15',
+      day: 'Thursday',
+      powerUp: 'Power Up 15',
+    });
+    expect(html).toContain('Power Up');
+    expect(html).toContain('Study Guide (Blank)');
+    expect(html).toContain('Study Guide (Completed)');
+    // Even without URLs the placeholders must be present
+    expect(html).toContain('attached');
   });
 
   it('renders reading and spelling as a cohesive combined parent update', () => {
@@ -87,6 +100,26 @@ describe('announcement templates', () => {
     expect(html).toContain('Focus words (21–25)');
     expect(html).toContain('u, v, w, x, y');
     expect(html).toContain('Challenge sentence');
+  });
+
+  it('renders reading announcement with checkout lesson derived from test number (test 4 → lesson 40)', () => {
+    const html = renderReadingTestBody({
+      lessonNum: '4',
+      readingTestPhrases: [],
+    });
+    expect(html).toContain('Lesson 40');
+    expect(html).toContain('Fluency goal');
+    expect(html).toContain('fluency log');
+  });
+
+  it('renders reading test 14 without any Fluency Checkout section', () => {
+    const html = renderReadingTestBody({
+      lessonNum: '14',
+      readingTestPhrases: [],
+    });
+    expect(html).not.toContain('Fluency Checkout');
+    expect(html).not.toContain('Fluency goal');
+    expect(html).not.toContain('fluency log');
   });
 });
 
