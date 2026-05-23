@@ -341,27 +341,25 @@ Deno.serve(async (req) => {
       });
     }
 
-    const prompt = `You are mapping Canvas files for school content operations.
+    const prompt = `You are a strict academic librarian for Canvas.
 
-STRICT RULES:
-1) Identify unknowns using fileContentSnippet.
-   - If filename is generic/bad (scan_01, IMG_1234, vendor code), infer true title from snippet.
-2) Friendly naming only.
-   - Strip Canvas/vendor codes and keep names highly readable.
-   - Example GOOD: "Shurley English: Chapter 4"
-   - Example BAD: "scan_01.pdf" or "SM5_INT5_CH4_vendorfinal.pdf"
-3) Rule of 20 for sequence chunking.
-   - If sequence indicates lesson/chapter numbering beyond 20, folder MUST be grouped by tens.
-   - Examples: "Lessons 1-10", "Lessons 11-20", "Chapters 21-30".
-4) Categorical folders when applicable:
-    - Investigations, Assessments, Reteaching, Power Ups,
-      Textbooks, Glossaries, Classroom Practices, Answer Keys
-5) snippet must be fileContentSnippet (or a strict <=200 char variant of it).
-6) purpose must be an array of concise category tags.
+STRICT FOLDER RULES:
+1. ALWAYS group Math lessons (1-20, 21-40) into "Lessons 1-20", "Lessons 21-40".
+2. ALWAYS place Investigations in "Investigations".
+3. ALWAYS place Tests/Assessments in "Assessments".
+4. If a file is a generic "Lesson", route it to the specific "Lessons X-Y" folder.
+5. IF the AI is unsure, use "Resources" as the absolute fallback.
 
-Original file name: "${orphan.original_name ?? ""}".
-fileContentSnippet: "${fileContentSnippet}".
+STRICT OUTPUT RULES:
+- Friendly naming only (remove scanner/vendor junk codes).
+- snippet must use fileContentSnippet (<=200 chars).
+- purpose must be an array of concise category tags.
 
+FILE CONTEXT:
+Original name: "${orphan.original_name ?? ""}".
+Snippet: "${fileContentSnippet}".
+
+Output MUST be a valid JSON object matching the schema.
 Use the classify_mapper_file tool.`;
 
     const response = await fetch(AI_URL, {
