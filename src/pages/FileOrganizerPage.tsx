@@ -9,6 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -122,6 +123,7 @@ export default function FileOrganizerPage() {
   const [mapperProgress, setMapperProgress] = useState({ current: 0, total: 0 });
   const [mapperProgressLabel, setMapperProgressLabel] = useState<string>('Processing files');
   const [rowExecutingId, setRowExecutingId] = useState<string | null>(null);
+  const [isDryRun, setIsDryRun] = useState(false);
   const [mapperPaused, setMapperPaused] = useState(false);
   const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
@@ -433,10 +435,49 @@ export default function FileOrganizerPage() {
     setMapperPaused(false);
   }, [mapperRunning]);
 
+  const logMapperDryRunChanges = useCallback(async (rows: OrphanFile[]) => {
+    if (rows.length === 0) return 0;
+
+    const logEntries = rows.map((row) => {
+      const oldName = row.original_name ?? row.canvas_file_id;
+      const oldFolder = oldName.includes('/') ? oldName.split('/').slice(0, -1).join('/') || null : null;
+      const newName = row.ai_suggested_name?.trim() || oldName;
+      const newFolder = row.ai_suggested_folder?.trim() || null;
+      const parsedCourseId = row.course_id ? Number.parseInt(row.course_id, 10) : null;
+
+      return {
+        deployment_mode: 'dry-run',
+        action: 'content_mapper_file_rename_move',
+        subject: 'File Organizer Content Mapper',
+        course_id: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
+        status: 'simulated',
+        metadata: {
+          fileId: row.canvas_file_id,
+          oldName,
+          newName,
+          oldFolder,
+          newFolder,
+          nameChange: `${oldName} -> ${newName}`,
+          folderChange: `${oldFolder ?? 'Unknown'} -> ${newFolder ?? 'Unknown'}`,
+        },
+      };
+    });
+
+    const { error } = await (supabase as any).from('dev_canvas_logs').insert(logEntries);
+    if (error) throw error;
+    return logEntries.length;
+  }, []);
+
   const executeMapperRow = useCallback(
     async (row: OrphanFile) => {
       setRowExecutingId(row.canvas_file_id);
       try {
+        if (isDryRun) {
+          const logged = await logMapperDryRunChanges([row]);
+          toast.success(`Dry Run: Logged ${logged} changes to simulation database`);
+          return;
+        }
+
         const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
           body: {
             fileId: row.canvas_file_id,
@@ -455,7 +496,7 @@ export default function FileOrganizerPage() {
         setRowExecutingId(null);
       }
     },
-    [],
+    [isDryRun, logMapperDryRunChanges],
   );
 
   const executeMapperBulk = useCallback(async () => {
@@ -468,6 +509,13 @@ export default function FileOrganizerPage() {
     setMapperProgressLabel('Executing rename & move');
     setMapperProgress({ current: 0, total: mapperRows.length });
     try {
+      if (isDryRun) {
+        const logged = await logMapperDryRunChanges(mapperRows);
+        setMapperProgress({ current: mapperRows.length, total: mapperRows.length });
+        toast.success(`Dry Run: Logged ${logged} changes to simulation database`);
+        return;
+      }
+
       const payload = mapperRows.map((row) => ({
         fileId: row.canvas_file_id,
         suggestedName: row.ai_suggested_name,
@@ -510,7 +558,7 @@ export default function FileOrganizerPage() {
       setMapperExecuting(false);
       setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
     }
-  }, [mapperRows]);
+  }, [isDryRun, logMapperDryRunChanges, mapperRows]);
 
   // Load batch progress on mount (for resume on reload)
   const loadBatchProgress = useCallback(async () => {
@@ -1198,6 +1246,17 @@ export default function FileOrganizerPage() {
                   )}
                   Execute Rename & Move
                 </Button>
+                <div className="flex items-center gap-2 ml-1 mb-1">
+                  <Switch
+                    id="mapper-dry-run"
+                    checked={isDryRun}
+                    onCheckedChange={setIsDryRun}
+                    disabled={mapperRunning || mapperExecuting}
+                  />
+                  <Label htmlFor="mapper-dry-run" className="text-xs whitespace-nowrap">
+                    Enable Dry Run (Log Only)
+                  </Label>
+                </div>
               </div>
 
               {mapperProgress.total > 0 && (
