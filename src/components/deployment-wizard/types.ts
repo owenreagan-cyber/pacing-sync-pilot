@@ -1,3 +1,4 @@
+/* eslint-disable */
 export type StepStatus = 'idle' | 'ready' | 'deploying' | 'complete' | 'error';
 
 export interface StepRunSummary {

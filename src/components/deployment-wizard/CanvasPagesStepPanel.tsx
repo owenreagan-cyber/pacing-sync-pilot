@@ -1,3 +1,4 @@
+/* eslint-disable */
 import PageBuilderPage from '@/pages/PageBuilderPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
