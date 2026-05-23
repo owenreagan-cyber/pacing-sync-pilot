@@ -32,14 +32,6 @@ export default tseslint.config(
       ],
 
       // TypeScript Strict Rules
-      "@typescript-eslint/explicit-function-return-types": [
-        "error",
-        {
-          allowExpressions: true,
-          allowTypedFunctionExpressions: true,
-          allowHigherOrderFunctions: true,
-        },
-      ],
       "@typescript-eslint/explicit-member-accessibility": [
         "warn",
         { accessibility: "explicit" },
