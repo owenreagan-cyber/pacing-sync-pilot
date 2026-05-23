@@ -419,7 +419,7 @@ export default function AnnouncementCenterPage() {
       if (formType === 'math_early' || formType === 'math_2day') {
         const lesson = tplTestNum.trim();
         if (!lesson) { toast.error('Test Number required'); return; }
-        const powerUp = config.powerUpMap[lesson] || config.powerUpMap[parseInt(lesson, 10) as unknown as string] || '';
+        const powerUp = lesson ? (config.powerUpMap[lesson] || config.powerUpMap[parseInt(lesson, 10) as unknown as string] || '') : '';
         const args = {
           lesson,
           day: 'Friday',
