@@ -202,6 +202,7 @@ export function generateRedirectPageHtml(params: RedirectPageParams): string {
 
 export function generateCanvasPageHtml(params: CanvasPageParams): string {
   const {
+    subject,
     rows,
     quarter,
     weekNum,
@@ -212,8 +213,49 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     calendarEvents = [],
     weekDates = [],
   } = params;
+  const isReadingLayout = subject === 'Reading' || subject === 'Reading & Spelling';
 
   const parts: string[] = [];
+
+  const formatLessonText = (row: CanvasPageRow | undefined): string => {
+    if (!row) return '';
+    const raw = (row.in_class || '').trim();
+    if (!raw) return '';
+    let txt = stripLessonTitle(raw, row.subject);
+    txt = injectFileLinks(txt, contentMap, row.subject);
+    if (row.canvas_url) {
+      return `<a title="${txt}" href="${row.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${row.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
+    }
+    return txt;
+  };
+
+  const matchesLessonNumber = (value: string | null | undefined, lessonNum: string | null | undefined): boolean => {
+    const rawValue = (value || '').trim();
+    const rawLessonNum = (lessonNum || '').trim();
+    if (!rawValue || !rawLessonNum) return false;
+    const num = Number.parseInt(rawLessonNum, 10);
+    if (!Number.isFinite(num)) return false;
+    return new RegExp(`(?:^|\\D)0*${num}(?:\\D|$)`, 'i').test(rawValue);
+  };
+
+  const findSpellingFallbackText = (lessonNum: string | null | undefined): string => {
+    const entry = contentMap.find((candidate) => {
+      if (candidate.subject !== 'Spelling') return false;
+      return (
+        matchesLessonNumber(candidate.canonical_name, lessonNum) ||
+        matchesLessonNumber(candidate.lesson_ref, lessonNum)
+      );
+    });
+    if (!entry) return '';
+    const raw = (entry.canonical_name || entry.lesson_ref || '').trim();
+    if (!raw) return '';
+    let txt = stripLessonTitle(raw, 'Spelling');
+    txt = injectFileLinks(txt, contentMap, 'Spelling');
+    if (entry.canvas_url) {
+      return `<a href="${entry.canvas_url}" target="_blank" style="color: inherit; text-decoration: underline;">${txt}</a>`;
+    }
+    return txt;
+  };
 
   parts.push(`<div ${KL_WRAPPER}>`);
   parts.push(`  <div id="kl_banner" class="">`);
@@ -279,7 +321,9 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     const dayRows = rows.filter((r) => r.day === day);
     const blockId = DAY_BLOCK_IDS[day];
     const isFriday = day === 'Friday';
-    const row = dayRows[0];
+    const readingRow = isReadingLayout ? dayRows.find((r) => r.subject === 'Reading') : undefined;
+    const spellingRow = isReadingLayout ? dayRows.find((r) => r.subject === 'Spelling') : undefined;
+    const row = readingRow ?? spellingRow ?? dayRows[0];
     const calLabel = calendarDayLabel(di, weekDates, calendarEvents);
 
     parts.push(`  <div id="${blockId}" class="">`);
@@ -308,17 +352,21 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       continue;
     }
 
+    if (isReadingLayout) {
+      const readingText = formatLessonText(readingRow);
+      const spellingText = formatLessonText(spellingRow) || findSpellingFallbackText(spellingRow?.lesson_num || readingRow?.lesson_num);
+      parts.push(`    <p><strong>Reading:</strong> ${readingText}</p>`);
+      parts.push(`    <p><strong>Spelling:</strong> ${spellingText}</p>`);
+      parts.push(`  </div>`);
+      continue;
+    }
+
     parts.push(`    <h4 ${KL_H4}><strong>In Class</strong></h4>`);
     for (const r of dayRows) {
       const raw = (r.in_class || '').trim();
       if (!raw) continue;
-      let txt = stripLessonTitle(raw, r.subject);
-      txt = injectFileLinks(txt, contentMap, r.subject);
-      if (r.canvas_url) {
-        txt = `<a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
-      } else {
-        txt = `<span>${txt}</span>`;
-      }
+      let txt = formatLessonText(r);
+      if (!r.canvas_url) txt = `<span>${txt}</span>`;
       parts.push(`    <p>${txt}</p>`);
     }
     parts.push(`    <p>&nbsp;</p>`);
