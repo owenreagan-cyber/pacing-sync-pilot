@@ -241,6 +241,14 @@ Deno.serve(async (req) => {
       return null;
     };
 
+    const assignmentExistsById = async (id: string): Promise<boolean> => {
+      const res = await fetchWithRetry(`${courseBase}/assignments/${id}`, { headers: canvasHeaders });
+      if (res.ok) return true;
+      if (res.status === 404) return false;
+      const errText = await res.text();
+      throw new Error(`Assignment existence check failed (${res.status}): ${errText}`);
+    };
+
     let groupId: number | null = null;
     if (assignmentGroup) {
       groupId = await resolveGroupId(courseBase, canvasHeaders, assignmentGroup);
@@ -270,6 +278,12 @@ Deno.serve(async (req) => {
       canvasAssignmentId = row?.canvas_assignment_id || null;
     }
     let discoveredAssignmentUrl: string | null = null;
+    if (canvasAssignmentId) {
+      const stillExists = await assignmentExistsById(canvasAssignmentId);
+      if (!stillExists) {
+        canvasAssignmentId = null;
+      }
+    }
     if (!canvasAssignmentId) {
       const existingAssignment = await findAssignmentByExactName(title);
       if (existingAssignment) {

@@ -76,8 +76,7 @@ Deno.serve(async (req) => {
       }
       return null;
     };
-    const findPageByExactUrlOrTitle = async (
-      urlSlug: string,
+    const findPageByExactTitle = async (
       exactTitle: string,
     ): Promise<{ url: string; frontPage: boolean; body: string | null } | null> => {
       let nextUrl: string | null =
@@ -91,7 +90,7 @@ Deno.serve(async (req) => {
           throw new Error(`Page lookup failed (${listRes.status}): ${errText}`);
         }
         const pages = (await listRes.json()) as Array<{ url?: string; title?: string }>;
-        const match = pages.find((p) => p.url === urlSlug || p.title === exactTitle);
+        const match = pages.find((p) => p.title === exactTitle);
         if (match?.url) {
           const detailRes = await fetchWithRetry(`${courseBase}/pages/${match.url}`, { headers: canvasHeaders });
           if (!detailRes.ok) {
@@ -207,7 +206,7 @@ Deno.serve(async (req) => {
       existingBody = pageData.body || "";
       resolvedPageUrl = pageData.url || pageUrl;
     } else if (getRes.status === 404) {
-      const matchedPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
+      const matchedPage = await findPageByExactTitle(pageTitle);
       if (matchedPage) {
         exists = true;
         isFrontPage = matchedPage.frontPage;
@@ -230,6 +229,18 @@ Deno.serve(async (req) => {
         status: 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Explicit upsert guard: if we would POST, first check for an existing page
+    // with the exact target title and switch to PUT when found.
+    if (!exists) {
+      const matchedByTitle = await findPageByExactTitle(pageTitle);
+      if (matchedByTitle) {
+        exists = true;
+        isFrontPage = matchedByTitle.frontPage;
+        existingBody = matchedByTitle.body || "";
+        resolvedPageUrl = matchedByTitle.url;
+      }
     }
 
     // Helper to write the deploy hash back to weeks.page_hashes[subject]
