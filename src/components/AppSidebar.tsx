@@ -13,6 +13,7 @@ import {
   Zap,
   ClipboardCheck,
   ChevronDown,
+  Workflow,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
@@ -38,6 +39,7 @@ import { useState } from 'react';
 
 const PRIMARY_NAV = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
+  { title: 'Deployment Wizard', url: '/deployment-wizard', icon: Workflow },
   { title: 'Pacing Entry', url: '/pacing', icon: Database },
   { title: 'Pacing Viewer', url: '/pacing-viewer', icon: Eye },
   { title: 'Page Builder', url: '/pages', icon: Globe },
