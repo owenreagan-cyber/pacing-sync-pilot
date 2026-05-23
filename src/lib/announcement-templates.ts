@@ -25,6 +25,22 @@ function linkPair(blankUrl?: string, answerKeyUrl?: string): string {
   return `<p><strong>Study Links:</strong> ${links.join(' &nbsp;|&nbsp; ')}</p>`;
 }
 
+/**
+ * Generates the Math-specific attachment block that always explicitly names
+ * the Power Up, Study Guide (Blank), and Study Guide (Completed) materials,
+ * using hyperlinks when URLs are available and bold text placeholders otherwise.
+ */
+function mathAttachmentBlock(powerUpLabel?: string, blankUrl?: string, completedUrl?: string): string {
+  const powerUpItem = `<strong>Power Up</strong> (${powerUpLabel || 'review sheet'}) — attached`;
+  const blankItem = blankUrl
+    ? `<a href="${blankUrl}" style="color:#0f172a;font-weight:700;">Study Guide (Blank)</a> — attached`
+    : `<strong>Study Guide (Blank)</strong> — attached`;
+  const completedItem = completedUrl
+    ? `<a href="${completedUrl}" style="color:#0f172a;font-weight:700;">Study Guide (Completed)</a> — attached`
+    : `<strong>Study Guide (Completed)</strong> — attached`;
+  return `<p><strong>Attached Materials:</strong></p><ul><li>${powerUpItem}</li><li>${blankItem}</li><li>${completedItem}</li></ul>`;
+}
+
 export interface MathTestContext {
   lesson: string;
   day: string;
@@ -99,13 +115,17 @@ export function renderMathTestBody(ctx: MathTestContext): string {
       <li><strong>Power Up focus:</strong> ${ctx.powerUp || 'Review all recent Power Up skills'}</li>
       <li><strong>Fact focus:</strong> ${factLabel}</li>
     </ul>
-    ${linkPair(ctx.blankStudyGuideUrl, ctx.answerKeyUrl)}
-    <p>Please have your child complete the blank guide first, then check with the answer key.</p>
+    ${mathAttachmentBlock(ctx.powerUp, ctx.blankStudyGuideUrl, ctx.answerKeyUrl)}
+    <p>Please have your child complete the blank guide first, then check with the completed guide.</p>
     <p>Thank you for your support at home!<br/>${ctx.teacherName || 'Owen Reagan'}</p>
   `);
 }
 
 export function renderReadingTestBody(ctx: ReadingTestContext): string {
+  const testNum = ctx.lessonNum ? parseInt(ctx.lessonNum, 10) : NaN;
+  const isTest14 = Number.isFinite(testNum) && testNum === 14;
+  const hasValidTestNum = Number.isFinite(testNum) && testNum >= 1;
+
   const lessonLine = ctx.lessonNum
     ? `<p>We are preparing for <strong>Reading Mastery Test ${ctx.lessonNum}</strong>.</p>`
     : `<p>We are preparing for our Reading Mastery test this week.</p>`;
@@ -116,14 +136,23 @@ export function renderReadingTestBody(ctx: ReadingTestContext): string {
   const wpm = ctx.fluencyGoalWpm ?? 130;
   const maxErrors = ctx.fluencyMaxErrors ?? 2;
 
+  // Auto-derive checkout lesson: append "0" to test number (e.g., test 4 → lesson 40)
+  const derivedCheckoutLesson = hasValidTestNum && !isTest14
+    ? String(testNum * 10)
+    : null;
+  const checkoutLesson = ctx.checkoutLesson ?? derivedCheckoutLesson;
+
+  const fluencySection = isTest14 ? '' : `
+    <p><strong>Fluency goal:</strong> ${wpm} words per minute with ${maxErrors} or fewer errors.</p>
+    <p>Please practice nightly with your child and have them track each timed read in a fluency log (date, words read, errors).</p>
+    <p>For the Fluency Checkout, have your child read to the flower from <strong>Lesson ${checkoutLesson || ctx.lessonNum || 'current reading lesson'}</strong>.</p>`;
+
   return wrapper('Reading', `
     ${banner('Reading', `Reading Mastery Test ${ctx.lessonNum || ''}`.trim())}
     <p>Hi parents, I hope your week is going well!</p>
     ${lessonLine}
     <p>Students will be assessed on ${phraseList}.</p>
-    <p><strong>Fluency goal:</strong> ${wpm} words per minute with ${maxErrors} or fewer errors.</p>
-    <p>Please practice nightly with your child and have them track each timed read in a fluency log (date, words read, errors).</p>
-    <p>The checkout passage will come from lesson <strong>${ctx.checkoutLesson || ctx.lessonNum || 'current reading lesson'}</strong>.</p>
+    ${fluencySection}
     ${linkPair(ctx.blankStudyGuideUrl, ctx.answerKeyUrl)}
     <p>Thank you for partnering with me!<br/>${ctx.teacherName || 'Owen Reagan'}</p>
   `);
