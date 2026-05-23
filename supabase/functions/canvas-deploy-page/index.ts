@@ -76,8 +76,7 @@ Deno.serve(async (req) => {
       }
       return null;
     };
-    const findPageByExactUrlOrTitle = async (
-      urlSlug: string,
+    const findPageByExactTitle = async (
       exactTitle: string,
     ): Promise<{ url: string; frontPage: boolean; body: string | null } | null> => {
       let nextUrl: string | null =
@@ -91,7 +90,7 @@ Deno.serve(async (req) => {
           throw new Error(`Page lookup failed (${listRes.status}): ${errText}`);
         }
         const pages = (await listRes.json()) as Array<{ url?: string; title?: string }>;
-        const match = pages.find((p) => p.url === urlSlug || p.title === exactTitle);
+        const match = pages.find((p) => p.title === exactTitle);
         if (match?.url) {
           const detailRes = await fetchWithRetry(`${courseBase}/pages/${match.url}`, { headers: canvasHeaders });
           if (!detailRes.ok) {
@@ -206,15 +205,7 @@ Deno.serve(async (req) => {
       isFrontPage = pageData.front_page === true;
       existingBody = pageData.body || "";
       resolvedPageUrl = pageData.url || pageUrl;
-    } else if (getRes.status === 404) {
-      const matchedPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
-      if (matchedPage) {
-        exists = true;
-        isFrontPage = matchedPage.frontPage;
-        existingBody = matchedPage.body || "";
-        resolvedPageUrl = matchedPage.url;
-      }
-    } else {
+    } else if (getRes.status !== 404) {
       existenceCheckError = await getRes.text();
     }
 
@@ -230,6 +221,17 @@ Deno.serve(async (req) => {
         status: 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Upsert guard: before creating (POST), query Canvas by the target title.
+    if (!exists) {
+      const matchedPage = await findPageByExactTitle(pageTitle);
+      if (matchedPage) {
+        exists = true;
+        isFrontPage = matchedPage.frontPage;
+        existingBody = matchedPage.body || "";
+        resolvedPageUrl = matchedPage.url;
+      }
     }
 
     // Helper to write the deploy hash back to weeks.page_hashes[subject]
