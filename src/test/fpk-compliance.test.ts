@@ -79,6 +79,29 @@ describe('FPK compliance', () => {
     expect(result.issues.some((i) => i.code === 'CROSS_COURSE_LEAK')).toBe(true);
   });
 
+  it('fails validation for worst-case malformed HTML', () => {
+    const malformedHtml = `
+      <div id="kl_banner"></div>
+      <div id="kl_custom_block_0">
+        <div id="kl_custom_block_3">
+          <a href="https://thalesacademy.instructure.com/courses/99999/assignments/1">bad</a>
+        </div>
+      </div>
+      <div id="kl_custom_block_5"></div>
+      <div id="kl_custom_block_4"></div>
+      <div id="kl_custom_block_6"></div>
+      <div id="kl_custom_block_2"></div>
+      <div id="kl_custom_block_1">Enough visible text to avoid empty page validation errors in this test.</div>
+    `;
+    const result = validateFpkPage(malformedHtml, 'Math');
+    expect(result.pass).toBe(false);
+    expect(
+      result.issues.some(
+        (i) => i.severity === 'critical' && (i.code === 'MISSING_BLOCK' || i.code === 'WRONG_NESTING'),
+      ),
+    ).toBe(true);
+  });
+
   it("LA CP title is 'ELA4: Shurley English Classroom Practice 52'", () => {
     expect(generateAssignmentTitle('Language Arts', 'CP', '52', 'ELA4:')).toBe('ELA4: Shurley English Classroom Practice 52');
   });
