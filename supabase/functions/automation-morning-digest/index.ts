@@ -10,7 +10,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.95.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? 're_c1tpEyD8_NKFusih9vKVQknRAQfmFcWCv';
 const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') ?? 'onboarding@resend.dev';
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Thales OS <onboarding@resend.dev>';
 
@@ -80,23 +80,18 @@ Deno.serve(async (req) => {
       <ul>${homeworkHtml}</ul>
     `;
 
-    let emailed = false;
-    if (RESEND_API_KEY) {
-      const r = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [ADMIN_EMAIL],
-          subject: `🌅 Day Ahead — ${today}`,
-          html,
-        }),
-      });
-      emailed = r.ok;
-      if (!r.ok) console.error('Resend error', r.status, await r.text());
-    } else {
-      console.warn('RESEND_API_KEY not set');
-    }
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        to: [ADMIN_EMAIL],
+        subject: `🌅 Day Ahead — ${today}`,
+        html,
+      }),
+    });
+    const emailed = r.ok;
+    if (!r.ok) console.error('Resend error', r.status, await r.text());
 
     await sb.from('deploy_logs').insert({
       type: 'morning-digest',
