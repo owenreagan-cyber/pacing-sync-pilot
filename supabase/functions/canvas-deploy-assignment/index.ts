@@ -93,7 +93,9 @@ Deno.serve(async (req) => {
       force,
     } = await req.json();
 
-    if (!courseId || !title) {
+    const normalizedTitle = typeof title === "string" ? title.trim() : "";
+
+    if (!courseId || !normalizedTitle) {
       return new Response(JSON.stringify({ error: "Missing courseId or title" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -245,11 +247,11 @@ Deno.serve(async (req) => {
       return null;
     };
 
-    const findAssignmentByExactName = async (
-      exactName: string,
+    const findAssignmentByExactTitle = async (
+      exactTitle: string,
     ): Promise<{ id: string; htmlUrl: string | null } | null> => {
       let nextUrl: string | null =
-        `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactName)}`;
+        `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactTitle)}`;
       let safety = 0;
 
       while (nextUrl && safety < 50) {
@@ -259,7 +261,7 @@ Deno.serve(async (req) => {
           throw new Error(`Assignment lookup failed (${listRes.status}): ${errText}`);
         }
         const items = (await listRes.json()) as Array<{ id: number; name?: string; html_url?: string | null }>;
-        const match = items.find((item) => item.name === exactName);
+        const match = items.find((item) => item.name === exactTitle);
         if (match) {
           return { id: String(match.id), htmlUrl: match.html_url ?? null };
         }
@@ -278,7 +280,7 @@ Deno.serve(async (req) => {
 
     const payload: Record<string, unknown> = {
       assignment: {
-        name: title,
+        name: normalizedTitle,
         description: description || "",
         points_possible: matrixConfig.pointsPossible,
         grading_type: matrixConfig.gradingType,
@@ -301,8 +303,9 @@ Deno.serve(async (req) => {
       canvasAssignmentId = row?.canvas_assignment_id || null;
     }
     let discoveredAssignmentUrl: string | null = null;
+    // Upsert guard: before creating (POST), query Canvas by the target title.
     if (!canvasAssignmentId) {
-      const existingAssignment = await findAssignmentByExactName(title);
+      const existingAssignment = await findAssignmentByExactTitle(normalizedTitle);
       if (existingAssignment) {
         canvasAssignmentId = existingAssignment.id;
         discoveredAssignmentUrl = existingAssignment.htmlUrl;
