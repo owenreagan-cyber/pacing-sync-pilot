@@ -23,7 +23,7 @@ export interface BuiltAssignment {
   title: string;
   description: string;
   points: number;
-  gradingType: string;
+  gradingType: 'percent' | 'pass_fail';
   assignmentGroup: string;
   courseId: number;
   dueDate: string | null; // YYYY-MM-DD
@@ -34,6 +34,28 @@ export interface BuiltAssignment {
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+interface CanvasPayloadMatrix {
+  points: number;
+  gradingType: 'percent' | 'pass_fail';
+  omitFromFinal: boolean;
+}
+
+function resolveCanvasPayloadMatrix(subject: string, type: string): CanvasPayloadMatrix {
+  if (subject === 'Math' && type === 'Study Guide') {
+    return {
+      points: 0,
+      gradingType: 'pass_fail',
+      omitFromFinal: true,
+    };
+  }
+
+  return {
+    points: 100,
+    gradingType: 'percent',
+    omitFromFinal: false,
+  };
+}
 
 /**
  * SHA-256 hash of canonical assignment fields for change detection.
@@ -216,6 +238,7 @@ export async function buildAssignmentForCell(
       { lessonNum },
     ));
   const groupInfo = resolveAssignmentGroup(subject, type);
+  const payloadMatrix = resolveCanvasPayloadMatrix(subject, type);
 
   // Skip rules — Friday rule is MANDATORY (not gated by config flag)
   let skipReason: string | null = null;
@@ -251,7 +274,7 @@ export async function buildAssignmentForCell(
   const contentHash = await hashAssignment({
     title,
     description,
-    points: groupInfo.points,
+    points: payloadMatrix.points,
     group: groupInfo.groupName,
     dueDate,
   });
@@ -265,12 +288,12 @@ export async function buildAssignmentForCell(
     type,
     title,
     description,
-    points: groupInfo.points,
-    gradingType: groupInfo.gradingType,
+    points: payloadMatrix.points,
+    gradingType: payloadMatrix.gradingType,
     assignmentGroup: groupInfo.groupName,
     courseId,
     dueDate,
-    omitFromFinal: groupInfo.omitFromFinal || type === 'Study Guide',
+    omitFromFinal: payloadMatrix.omitFromFinal,
     contentHash,
     isSynthetic,
     skipReason,

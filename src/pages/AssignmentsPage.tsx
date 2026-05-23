@@ -349,6 +349,7 @@ export default function AssignmentsPage() {
           assignmentGroup: r.assignmentGroup,
           dueDate: ov.dueDate ?? r.dueDate ?? undefined,
           omitFromFinal: r.omitFromFinal,
+          type: r.type,
         },
       );
       if (res?.status === 'DEPLOYED' || res?.status === 'NO_CHANGE') {

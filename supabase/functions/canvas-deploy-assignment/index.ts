@@ -37,6 +37,28 @@ function toDueAt(dateStr: string): string {
   return local.toISOString();
 }
 
+type MatrixPayloadConfig = {
+  pointsPossible: number;
+  gradingType: 'percent' | 'pass_fail';
+  omitFromFinalGrade: boolean;
+};
+
+function resolveMatrixPayloadConfig(subject: string, type: string): MatrixPayloadConfig {
+  if (subject === 'Math' && type === 'Study Guide') {
+    return {
+      pointsPossible: 0,
+      gradingType: 'pass_fail',
+      omitFromFinalGrade: true,
+    };
+  }
+
+  return {
+    pointsPossible: 100,
+    gradingType: 'percent',
+    omitFromFinalGrade: false,
+  };
+}
+
 async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
   let lastErr: Error | null = null;
   for (let i = 0; i < attempts; i++) {
@@ -64,15 +86,24 @@ Deno.serve(async (req) => {
 
   try {
     const {
-      subject, courseId, title, description, points, gradingType,
+      subject, courseId, title, description,
       assignmentGroup, dueDate, existingId, rowId, weekId,
-      omitFromFinal, contentHash,
+      contentHash,
       day, type, isSynthetic,
       force,
     } = await req.json();
 
-    if (!courseId || !title) {
+    const normalizedTitle = typeof title === "string" ? title.trim() : "";
+
+    if (!courseId || !normalizedTitle) {
       return new Response(JSON.stringify({ error: "Missing courseId or title" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!subject || !type || !dueDate) {
+      return new Response(JSON.stringify({ error: "Missing required matrix fields: subject, type, dueDate" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -292,17 +323,19 @@ Deno.serve(async (req) => {
       groupId = await resolveGroupId(courseBase, canvasHeaders, assignmentGroup);
     }
     const dueAt = dueDate ? toDueAt(dueDate) : null;
+    const matrixConfig = resolveMatrixPayloadConfig(String(subject ?? ""), String(type ?? ""));
 
     const payload: Record<string, unknown> = {
       assignment: {
         name: title,
         description: description || "",
-        points_possible: points ?? 100,
-        grading_type: gradingType || "points",
+        points_possible: matrixConfig.pointsPossible,
+        grading_type: matrixConfig.gradingType,
+        submission_types: ["on_paper"],
+        omit_from_final_grade: omitFromFinal ? true : matrixConfig.omitFromFinalGrade,
         published: true,
         ...(groupId ? { assignment_group_id: groupId } : {}),
         ...(dueAt ? { due_at: dueAt } : {}),
-        ...(omitFromFinal ? { omit_from_final_grade: true } : {}),
       },
     };
 
@@ -317,6 +350,7 @@ Deno.serve(async (req) => {
       canvasAssignmentId = row?.canvas_assignment_id || null;
     }
     let discoveredAssignmentUrl: string | null = null;
+    // Upsert guard: before creating (POST), query Canvas by the target title.
     if (!canvasAssignmentId) {
       const existingAssignment = await findAssignmentByExactName(title, {
         assignmentGroupId: groupId,

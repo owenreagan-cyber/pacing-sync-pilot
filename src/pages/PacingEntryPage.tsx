@@ -168,25 +168,7 @@ function buildResourceRefs(subject: string, d: DayData): string[] {
   const pad2 = String(num).padStart(2, '0');
   if (subject === 'Math' && d.type !== 'Test') {
     refs.push('HW_Evens', 'HW_Odds', 'Math_Textbook', `Math_Lesson_${pad3}`);
-    const POWER_UP: Record<number, string> = {
-      1:'A',2:'A',3:'A',4:'A',5:'A',6:'A',7:'A',8:'A',
-      9:'B',10:'B',11:'B',12:'B',13:'B',14:'B',15:'B',
-      16:'C',17:'C',18:'C',19:'C',20:'D',21:'D',
-      22:'F',23:'E',24:'F',25:'D',26:'F',27:'F',28:'E',29:'F',
-      30:'D',31:'F',32:'E',33:'F',34:'D',35:'F',36:'E',37:'F',38:'D',39:'F',
-      40:'E',41:'F',42:'D',43:'E',44:'F',45:'D',46:'F',47:'F',
-      48:'G',49:'G',50:'F',51:'G',52:'F',53:'F',54:'G',55:'F',56:'G',
-      57:'F',58:'G',59:'F',60:'G',61:'F',62:'G',63:'F',64:'F',
-      65:'C',66:'F',67:'G',68:'E',69:'F',70:'G',71:'C',72:'D',
-      73:'F',74:'G',75:'C',76:'H',77:'H',78:'H',79:'H',80:'H',
-      81:'H',82:'H',83:'H',84:'H',85:'H',86:'H',87:'H',88:'H',
-      89:'F',90:'F',91:'I',92:'I',93:'I',94:'I',95:'I',96:'I',
-      97:'I',98:'I',99:'I',100:'I',101:'J',102:'J',103:'J',104:'J',
-      105:'J',106:'J',107:'J',108:'J',109:'J',110:'J',
-      111:'K',112:'K',113:'K',114:'K',115:'K',116:'K',
-      117:'K',118:'K',119:'K',120:'K',
-    };
-    if (POWER_UP[num]) refs.push(`Math_PowerUp_${POWER_UP[num]}`);
+    if (POWER_UP_MAP[num]) refs.push(`Math_PowerUp_${POWER_UP_MAP[num]}`);
     const rStart = Math.floor((num - 1) / 10) * 10 + 1;
     refs.push(`Math_Reteaching_L${String(rStart).padStart(3, '0')}`);
   }

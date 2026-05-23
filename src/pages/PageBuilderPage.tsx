@@ -85,6 +85,7 @@ export default function PageBuilderPage() {
   const [contentMap, setContentMap] = useState<ContentMapEntry[]>([]);
   const [latestNewsletter, setLatestNewsletter] = useState<{
     homeroom_notes: string | null;
+    homeroom_notes_html?: string | null;
     birthdays: string | null;
     school_news?: string | null;
     points_of_contact?: ContactEntry[];
@@ -128,7 +129,7 @@ export default function PageBuilderPage() {
     });
     supabase
       .from('newsletters')
-      .select('homeroom_notes, birthdays, school_news, points_of_contact, quick_links, footer_line')
+      .select('homeroom_notes, homeroom_notes_html, birthdays, school_news, points_of_contact, quick_links, footer_line')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -203,6 +204,7 @@ export default function PageBuilderPage() {
         dateRange: selectedWeek.date_range || deriveDateRange(selectedWeek.quarter, selectedWeek.week_num),
         quarterColor,
         calendarReminders: selectedWeek.reminders || '',
+        homeroomNotesHtml: latestNewsletter?.homeroom_notes_html || undefined,
         homeroomNotes: latestNewsletter?.homeroom_notes || '',
         birthdays: latestNewsletter?.birthdays || '',
         schoolNews: latestNewsletter?.school_news || '',
@@ -312,6 +314,7 @@ export default function PageBuilderPage() {
         dateRange: selectedWeek.date_range || deriveDateRange(selectedWeek.quarter, selectedWeek.week_num),
         quarterColor,
         calendarReminders: selectedWeek.reminders || '',
+        homeroomNotesHtml: latestNewsletter?.homeroom_notes_html || undefined,
         homeroomNotes: latestNewsletter?.homeroom_notes || '',
         birthdays: latestNewsletter?.birthdays || '',
         schoolNews: latestNewsletter?.school_news || '',

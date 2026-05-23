@@ -250,6 +250,18 @@ Deno.serve(async (req) => {
       existingBody = resolvedExistingPage.body || "";
     }
 
+    // Upsert guard: before creating (POST), query Canvas by the target title.
+    if (!exists) {
+      const matchedPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
+      if (matchedPage) {
+        exists = true;
+        isFrontPage = matchedPage.frontPage;
+        existingBody = matchedPage.body || "";
+        resolvedPageId = matchedPage.id;
+        resolvedPageUrl = matchedPage.url;
+      }
+    }
+
     // Helper to write the deploy hash back to weeks.page_hashes[subject]
     const persistHash = async () => {
       if (!weekId || !subject || !contentHash) return;

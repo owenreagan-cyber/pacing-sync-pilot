@@ -1,5 +1,10 @@
 // Shared Canvas REST API client (read-only).
 // Handles base URL normalization, pagination via Link headers, and 429/5xx retry.
+// All HTTP calls funnel through the shared `fetchWithRetry` primitive
+// (see supabase/functions/_shared/retry-fetch.ts), which mirrors the
+// frontend retry contract in src/lib/retry-fetch.ts.
+
+import { fetchWithRetry } from './retry-fetch.ts';
 
 const RAW_BASE = Deno.env.get('CANVAS_BASE_URL') ?? 'https://thalesacademy.instructure.com';
 const TOKEN = Deno.env.get('CANVAS_API_TOKEN') ?? '';
@@ -9,20 +14,6 @@ export const CANVAS_BASE = RAW_BASE.replace(/\/+$/, '');
 export const IS_DEV_MODE = SYSTEM_MODE === 'DEV';
 
 const WRITE_METHODS = new Set(['PUT', 'POST', 'DELETE', 'PATCH']);
-const RETRYABLE_STATUS_CODES = new Set([429, 503]);
-const MAX_CANVAS_RETRIES = 3;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getRetryDelayMs(attempt: number): number {
-  const base = 1000;
-  const cap = 12000;
-  const expo = Math.min(cap, base * 2 ** attempt);
-  const jitter = Math.floor(Math.random() * 400);
-  return expo + jitter;
-}
 
 /**
  * Mocked OK response used when DEV mode intercepts a Canvas write.
@@ -47,7 +38,7 @@ export async function canvasWrite(url: string, init: RequestInit): Promise<Respo
     console.log('DEV MODE: Canvas Write Aborted', { method, url });
     return mockedOkResponse();
   }
-  return fetch(url, {
+  return fetchWithRetry(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
@@ -98,13 +89,13 @@ export interface CanvasFile {
   updated_at?: string;
 }
 
-export async function fetchCanvasWithRetry(url: string, init?: RequestInit, attempt = 0): Promise<Response> {
+export async function fetchCanvasWithRetry(url: string, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? 'GET').toUpperCase();
   if (IS_DEV_MODE && WRITE_METHODS.has(method)) {
     console.log('DEV MODE: Canvas Write Aborted', { method, url });
     return mockedOkResponse();
   }
-  const res = await fetch(url, {
+  return fetchWithRetry(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
@@ -112,12 +103,8 @@ export async function fetchCanvasWithRetry(url: string, init?: RequestInit, atte
       ...(init?.headers ?? {}),
     },
   });
-  if (RETRYABLE_STATUS_CODES.has(res.status) && attempt < MAX_CANVAS_RETRIES) {
-    await sleep(getRetryDelayMs(attempt));
-    return fetchCanvasWithRetry(url, init, attempt + 1);
-  }
-  return res;
 }
+
 
 function parseNextLink(linkHeader: string | null): string | null {
   if (!linkHeader) return null;

@@ -184,7 +184,7 @@ export default function AnnouncementCenterPage() {
       const mathTests = rows.filter((r) => r.subject === 'Math' && /test/i.test(r.type || ''));
       for (const mt of mathTests) {
         const lesson = mt.lesson_num || '';
-        const powerUp = lesson ? config.powerUpMap[lesson] || '' : '';
+        const powerUp = lesson ? (config.powerUpMap[lesson] || config.powerUpMap[parseInt(lesson, 10) as unknown as string] || '') : '';
         const factTest = lesson ? `Fact Test ${lesson} (${40} Division facts)` : 'Fact Test';
         const blankStudyGuideUrl = mt.canvas_url || undefined;
         const answerKeyUrl = mt.object_id?.startsWith('http') ? mt.object_id : undefined;
@@ -419,7 +419,7 @@ export default function AnnouncementCenterPage() {
       if (formType === 'math_early' || formType === 'math_2day') {
         const lesson = tplTestNum.trim();
         if (!lesson) { toast.error('Test Number required'); return; }
-        const powerUp = config.powerUpMap[lesson] || '';
+        const powerUp = config.powerUpMap[lesson] || config.powerUpMap[parseInt(lesson, 10) as unknown as string] || '';
         const args = {
           lesson,
           day: 'Friday',
@@ -571,7 +571,7 @@ export default function AnnouncementCenterPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
+          model: 'google/gemini-2.0-flash-001',
           messages: [
             {
               role: 'system',
