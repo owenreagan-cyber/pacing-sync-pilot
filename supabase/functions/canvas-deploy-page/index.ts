@@ -67,6 +67,8 @@ Deno.serve(async (req) => {
     };
 
     const courseBase = `${canvasBase}/api/v1/courses/${courseId}`;
+    const normalizeName = (value: string): string =>
+      value.trim().replace(/\s+/g, " ").toLowerCase();
     const parseNextLink = (linkHeader: string | null): string | null => {
       if (!linkHeader) return null;
       const parts = linkHeader.split(",");
@@ -76,13 +78,37 @@ Deno.serve(async (req) => {
       }
       return null;
     };
+    const getPageByUrl = async (
+      urlSlug: string,
+    ): Promise<{ id: string; url: string; title: string; frontPage: boolean; published: boolean; body: string | null } | null> => {
+      const detailRes = await fetchWithRetry(`${courseBase}/pages/${urlSlug}`, { headers: canvasHeaders });
+      if (detailRes.status === 404) return null;
+      if (!detailRes.ok) {
+        const detailErr = await detailRes.text();
+        throw new Error(`Page detail lookup failed (${detailRes.status}): ${detailErr}`);
+      }
+      const detail = await detailRes.json();
+      return {
+        id: String(detail.id),
+        url: detail.url || urlSlug,
+        title: detail.title || "",
+        frontPage: detail.front_page === true,
+        published: detail.published === true,
+        body: detail.body ?? null,
+      };
+    };
     const findPageByExactUrlOrTitle = async (
       urlSlug: string,
       exactTitle: string,
-    ): Promise<{ url: string; frontPage: boolean; body: string | null } | null> => {
+    ): Promise<{ id: string; url: string; title: string; frontPage: boolean; published: boolean; body: string | null } | null> => {
+      const byUrl = await getPageByUrl(urlSlug);
+      if (byUrl) return byUrl;
+
+      const normalizedTitle = normalizeName(exactTitle);
       let nextUrl: string | null =
         `${courseBase}/pages?per_page=100&search_term=${encodeURIComponent(exactTitle)}`;
       let safety = 0;
+      const candidateUrls = new Set<string>();
 
       while (nextUrl && safety < 50) {
         const listRes = await fetchWithRetry(nextUrl, { headers: canvasHeaders });
@@ -91,24 +117,37 @@ Deno.serve(async (req) => {
           throw new Error(`Page lookup failed (${listRes.status}): ${errText}`);
         }
         const pages = (await listRes.json()) as Array<{ url?: string; title?: string }>;
-        const match = pages.find((p) => p.url === urlSlug || p.title === exactTitle);
-        if (match?.url) {
-          const detailRes = await fetchWithRetry(`${courseBase}/pages/${match.url}`, { headers: canvasHeaders });
-          if (!detailRes.ok) {
-            const detailErr = await detailRes.text();
-            throw new Error(`Page detail lookup failed (${detailRes.status}): ${detailErr}`);
+        for (const page of pages) {
+          if (!page.url) continue;
+          const isUrlMatch = page.url === urlSlug;
+          const isExactNormalizedTitleMatch = page.title ? normalizeName(page.title) === normalizedTitle : false;
+          if (isUrlMatch || isExactNormalizedTitleMatch) {
+            candidateUrls.add(page.url);
           }
-          const detail = await detailRes.json();
-          return {
-            url: detail.url || match.url,
-            frontPage: detail.front_page === true,
-            body: detail.body ?? null,
-          };
         }
         nextUrl = parseNextLink(listRes.headers.get("link"));
         safety += 1;
       }
-      return null;
+
+      const candidates: Array<{ id: string; url: string; title: string; frontPage: boolean; published: boolean; body: string | null }> = [];
+      for (const candidateUrl of candidateUrls) {
+        const detail = await getPageByUrl(candidateUrl);
+        if (detail) candidates.push(detail);
+      }
+
+      if (candidates.length === 0) return null;
+
+      const normalizedCandidates = candidates.filter((candidate) => normalizeName(candidate.title) === normalizedTitle);
+      const exactUrlMatch = normalizedCandidates.find((candidate) => candidate.url === urlSlug);
+      const selected = exactUrlMatch || normalizedCandidates[0] || candidates[0];
+
+      if (normalizedCandidates.length > 1) {
+        console.warn(
+          `[canvas-deploy-page] Multiple exact title matches for "${exactTitle}" in course ${courseId}. Candidates=${normalizedCandidates.map((c) => `${c.id}:${c.url}`).join(", ")} selected=${selected.id}:${selected.url}`,
+        );
+      }
+
+      return selected;
     };
 
     // Helper: if Canvas page is a front_page but not published, return the
@@ -127,6 +166,10 @@ Deno.serve(async (req) => {
     // stored hash, we still GET Canvas once to detect manual drift on
     // front_page pages (e.g., teacher unpublished it directly in Canvas) and
     // auto-repair before skipping.
+    let resolvedExistingPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
+    let resolvedPageId: string | null = resolvedExistingPage?.id ?? null;
+    let resolvedPageUrl = resolvedExistingPage?.url || pageUrl;
+
     if (weekId && subject && contentHash) {
       const { data: weekRow } = await sb
         .from("weeks")
@@ -135,101 +178,76 @@ Deno.serve(async (req) => {
         .maybeSingle();
       const storedHash = (weekRow?.page_hashes as Record<string, string> | null)?.[subject];
       if (storedHash && storedHash === contentHash) {
-        const driftRes = await fetchWithRetry(`${courseBase}/pages/${pageUrl}`, { headers: canvasHeaders });
-        let repaired = false;
-        if (driftRes.ok) {
-          const driftData = await driftRes.json();
-          const repairPayload = assertFrontPagePublished(driftData);
-          if (repairPayload) {
-            const repairRes = await fetchWithRetry(`${courseBase}/pages/${pageUrl}`, {
-              method: "PUT",
-              headers: canvasHeaders,
-              body: JSON.stringify(repairPayload),
-            });
-            repaired = repairRes.ok;
+        if (!resolvedExistingPage) {
+          // Hash matches but page no longer exists in Canvas; continue into deploy flow
+          // so the page is re-created instead of incorrectly returning NO_CHANGE.
+        } else {
+          const driftRes = await fetchWithRetry(`${courseBase}/pages/${resolvedExistingPage.url}`, { headers: canvasHeaders });
+          let repaired = false;
+          if (driftRes.ok) {
+            const driftData = await driftRes.json();
+            const repairPayload = assertFrontPagePublished(driftData);
+            if (repairPayload) {
+              const repairRes = await fetchWithRetry(`${courseBase}/pages/${resolvedExistingPage.url}`, {
+                method: "PUT",
+                headers: canvasHeaders,
+                body: JSON.stringify(repairPayload),
+              });
+              repaired = repairRes.ok;
+              await sb.from("deploy_log").insert({
+                week_id: weekId,
+                subject,
+                action: "page_deploy",
+                status: repaired ? "REPAIRED" : "ERROR",
+                canvas_url: `${canvasBase}/courses/${courseId}/pages/${resolvedExistingPage.url}`,
+                message: repaired
+                  ? `Hash match — front_page was unpublished, re-published [canvas_id:${resolvedExistingPage.id}]`
+                  : `Hash match — repair PUT failed [canvas_id:${resolvedExistingPage.id}]`,
+              });
+              if (repaired) {
+                await sb.from("deploy_notifications").insert({
+                  title: `Front page re-published — ${subject}`,
+                  message: `${pageTitle} was unpublished in Canvas; auto-repaired.`,
+                  level: "warn",
+                  entity_ref: `${subject}:${resolvedExistingPage.url}`,
+                });
+              }
+            }
+          } else {
+            await driftRes.text();
+          }
+
+          if (!repaired) {
             await sb.from("deploy_log").insert({
               week_id: weekId,
               subject,
               action: "page_deploy",
-              status: repaired ? "REPAIRED" : "ERROR",
-              canvas_url: `${canvasBase}/courses/${courseId}/pages/${pageUrl}`,
-              message: repaired
-                ? "Hash match — front_page was unpublished, re-published"
-                : "Hash match — repair PUT failed",
+              status: "NO_CHANGE",
+              canvas_url: `${canvasBase}/courses/${courseId}/pages/${resolvedExistingPage.url}`,
+              message: `Hash match — skipped (front-page state OK) [canvas_id:${resolvedExistingPage.id}]`,
             });
-            if (repaired) {
-              await sb.from("deploy_notifications").insert({
-                title: `Front page re-published — ${subject}`,
-                message: `${pageTitle} was unpublished in Canvas; auto-repaired.`,
-                level: "warn",
-                entity_ref: `${subject}:${pageUrl}`,
-              });
-            }
           }
-        } else {
-          await driftRes.text();
-        }
 
-        if (!repaired) {
-          await sb.from("deploy_log").insert({
-            week_id: weekId,
-            subject,
-            action: "page_deploy",
-            status: "NO_CHANGE",
-            canvas_url: `${canvasBase}/courses/${courseId}/pages/${pageUrl}`,
-            message: "Hash match — skipped (front-page state OK)",
+          return new Response(JSON.stringify({
+            status: repaired ? "REPAIRED" : "NO_CHANGE",
+            pageId: resolvedExistingPage.id,
+            pageUrl: resolvedExistingPage.url,
+            canvasUrl: `${canvasBase}/courses/${courseId}/pages/${resolvedExistingPage.url}`,
+            skipReason: "hash_match",
+            repaired,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-
-        return new Response(JSON.stringify({
-          status: repaired ? "REPAIRED" : "NO_CHANGE",
-          canvasUrl: `${canvasBase}/courses/${courseId}/pages/${pageUrl}`,
-          skipReason: "hash_match",
-          repaired,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
       }
     }
 
-    // 1. GET page to check existence + front_page
-    const getRes = await fetchWithRetry(`${courseBase}/pages/${pageUrl}`, { headers: canvasHeaders });
-    let exists = false;
-    let isFrontPage = false;
+    // 1. Resolve existing page by slug fast-path, then normalized-title lookup
+    let exists = !!resolvedExistingPage;
+    let isFrontPage = resolvedExistingPage?.frontPage === true;
     let existingBody = "";
-    let resolvedPageUrl = pageUrl;
-    let existenceCheckError: string | null = null;
-
-    if (getRes.ok) {
-      const pageData = await getRes.json();
-      exists = true;
-      isFrontPage = pageData.front_page === true;
-      existingBody = pageData.body || "";
-      resolvedPageUrl = pageData.url || pageUrl;
-    } else if (getRes.status === 404) {
-      const matchedPage = await findPageByExactUrlOrTitle(pageUrl, pageTitle);
-      if (matchedPage) {
-        exists = true;
-        isFrontPage = matchedPage.frontPage;
-        existingBody = matchedPage.body || "";
-        resolvedPageUrl = matchedPage.url;
-      }
-    } else {
-      existenceCheckError = await getRes.text();
-    }
-
-    if (!exists && existenceCheckError) {
-      await sb.from("deploy_log").insert({
-        week_id: weekId || null,
-        subject: subject || null,
-        action: "page_deploy",
-        status: "ERROR",
-        message: `GET ${getRes.status}: ${existenceCheckError}`,
-      });
-      return new Response(JSON.stringify({ error: existenceCheckError, status: "ERROR" }), {
-        status: 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (resolvedExistingPage) {
+      existingBody = resolvedExistingPage.body || "";
     }
 
     // Helper to write the deploy hash back to weeks.page_hashes[subject]
@@ -266,11 +284,13 @@ Deno.serve(async (req) => {
         action: "page_deploy",
         status: "NO_CHANGE",
         canvas_url: `${canvasBase}/courses/${courseId}/pages/${resolvedPageUrl}`,
-        message: "Content unchanged — skipped" + (setFrontPage ? " (set as homepage)" : ""),
+        message: `Content unchanged — skipped${setFrontPage ? " (set as homepage)" : ""} [canvas_id:${resolvedPageId || "n/a"}]`,
       });
 
       return new Response(JSON.stringify({
         status: "NO_CHANGE",
+        pageId: resolvedPageId,
+        pageUrl: resolvedPageUrl,
         canvasUrl: `${canvasBase}/courses/${courseId}/pages/${resolvedPageUrl}`,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -321,7 +341,7 @@ Deno.serve(async (req) => {
         subject: subject || null,
         action: "page_deploy",
         status: "ERROR",
-        message: `${method} ${res.status}: ${errText}`,
+        message: `${method} ${res.status}: ${errText} [canvas_id:${resolvedPageId || "n/a"}]`,
         payload: payload as unknown as Record<string, unknown>,
       });
 
@@ -339,7 +359,10 @@ Deno.serve(async (req) => {
     }
 
     const result = await res.json();
+    const pageId = String(result.id || resolvedPageId || "");
     const canonicalPageUrl = result.url || resolvedPageUrl;
+    resolvedPageId = pageId || resolvedPageId;
+    resolvedPageUrl = canonicalPageUrl;
     const canvasUrl = `${canvasBase}/courses/${courseId}/pages/${canonicalPageUrl}`;
 
     // 4. If page was just created (POST), separate PUT to set front_page
@@ -363,7 +386,7 @@ Deno.serve(async (req) => {
       action: "page_deploy",
       status: "DEPLOYED",
       canvas_url: canvasUrl,
-      message: `${exists ? "Updated" : "Created"} page: ${pageTitle}${setFrontPage ? " (set as homepage)" : ""}`,
+      message: `${exists ? "Updated" : "Created"} page: ${pageTitle}${setFrontPage ? " (set as homepage)" : ""} [canvas_id:${resolvedPageId || "n/a"}]`,
     });
 
     await sb.from("deploy_notifications").insert({
@@ -373,7 +396,12 @@ Deno.serve(async (req) => {
       entity_ref: `${subject || ""}:${pageUrl}`,
     });
 
-    return new Response(JSON.stringify({ status: "DEPLOYED", canvasUrl }), {
+    return new Response(JSON.stringify({
+      status: "DEPLOYED",
+      pageId: resolvedPageId,
+      pageUrl: resolvedPageUrl,
+      canvasUrl,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

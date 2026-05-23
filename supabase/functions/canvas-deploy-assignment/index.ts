@@ -184,17 +184,18 @@ Deno.serve(async (req) => {
         existingRow.content_hash === contentHash &&
         existingRow.canvas_assignment_id
       ) {
+        const existingAssignmentId = String(existingRow.canvas_assignment_id);
         await sb.from("deploy_log").insert({
           week_id: weekId || null,
           subject: subject || null,
           action: "assignment_deploy",
           status: "NO_CHANGE",
           canvas_url: existingRow.canvas_url,
-          message: `Skipped (no change): ${title}`,
+          message: `Skipped (no change): ${title} [canvas_id:${existingAssignmentId}]`,
         });
         return new Response(JSON.stringify({
           status: "NO_CHANGE",
-          assignmentId: existingRow.canvas_assignment_id,
+          assignmentId: existingAssignmentId,
           canvasUrl: existingRow.canvas_url,
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -206,6 +207,8 @@ Deno.serve(async (req) => {
     };
 
     const courseBase = `${canvasBase}/api/v1/courses/${courseId}`;
+    const normalizeName = (value: string): string =>
+      value.trim().replace(/\s+/g, " ").toLowerCase();
     const parseNextLink = (linkHeader: string | null): string | null => {
       if (!linkHeader) return null;
       const parts = linkHeader.split(",");
@@ -218,10 +221,19 @@ Deno.serve(async (req) => {
 
     const findAssignmentByExactName = async (
       exactName: string,
+      options?: { dueAt?: string; assignmentGroupId?: number | null },
     ): Promise<{ id: string; htmlUrl: string | null } | null> => {
+      const normalizedTitle = normalizeName(exactName);
       let nextUrl: string | null =
         `${courseBase}/assignments?per_page=100&search_term=${encodeURIComponent(exactName)}`;
       let safety = 0;
+      const candidates: Array<{
+        id: number;
+        name: string;
+        htmlUrl: string | null;
+        dueAt: string | null;
+        assignmentGroupId: number | null;
+      }> = [];
 
       while (nextUrl && safety < 50) {
         const listRes = await fetchWithRetry(nextUrl, { headers: canvasHeaders });
@@ -229,22 +241,57 @@ Deno.serve(async (req) => {
           const errText = await listRes.text();
           throw new Error(`Assignment lookup failed (${listRes.status}): ${errText}`);
         }
-        const items = (await listRes.json()) as Array<{ id: number; name?: string; html_url?: string | null }>;
-        const match = items.find((item) => item.name === exactName);
-        if (match) {
-          return { id: String(match.id), htmlUrl: match.html_url ?? null };
+        const items = (await listRes.json()) as Array<{
+          id: number;
+          name?: string;
+          html_url?: string | null;
+          due_at?: string | null;
+          assignment_group_id?: number | null;
+        }>;
+        for (const item of items) {
+          if (!item.name) continue;
+          if (normalizeName(item.name) !== normalizedTitle) continue;
+          candidates.push({
+            id: item.id,
+            name: item.name,
+            htmlUrl: item.html_url ?? null,
+            dueAt: item.due_at ?? null,
+            assignmentGroupId: item.assignment_group_id ?? null,
+          });
         }
         nextUrl = parseNextLink(listRes.headers.get("link"));
         safety += 1;
       }
 
-      return null;
+      if (candidates.length === 0) return null;
+
+      let narrowed = candidates;
+      if (candidates.length > 1 && options?.assignmentGroupId) {
+        const byGroup = candidates.filter((candidate) => candidate.assignmentGroupId === options.assignmentGroupId);
+        if (byGroup.length > 0) narrowed = byGroup;
+      }
+      if (narrowed.length > 1 && options?.dueAt) {
+        const byDueAt = narrowed.filter((candidate) => candidate.dueAt === options.dueAt);
+        if (byDueAt.length > 0) narrowed = byDueAt;
+      }
+
+      narrowed.sort((a, b) => a.id - b.id);
+      const selected = narrowed[0];
+
+      if (candidates.length > 1) {
+        console.warn(
+          `[canvas-deploy-assignment] Multiple exact title matches for "${exactName}" in course ${courseId}. Candidates=${candidates.map((c) => `${c.id}(group:${c.assignmentGroupId ?? "n/a"},due:${c.dueAt ?? "n/a"})`).join(", ")} selected=${selected.id}`,
+        );
+      }
+
+      return { id: String(selected.id), htmlUrl: selected.htmlUrl };
     };
 
     let groupId: number | null = null;
     if (assignmentGroup) {
       groupId = await resolveGroupId(courseBase, canvasHeaders, assignmentGroup);
     }
+    const dueAt = dueDate ? toDueAt(dueDate) : null;
 
     const payload: Record<string, unknown> = {
       assignment: {
@@ -254,7 +301,7 @@ Deno.serve(async (req) => {
         grading_type: gradingType || "points",
         published: true,
         ...(groupId ? { assignment_group_id: groupId } : {}),
-        ...(dueDate ? { due_at: toDueAt(dueDate) } : {}),
+        ...(dueAt ? { due_at: dueAt } : {}),
         ...(omitFromFinal ? { omit_from_final_grade: true } : {}),
       },
     };
@@ -271,7 +318,10 @@ Deno.serve(async (req) => {
     }
     let discoveredAssignmentUrl: string | null = null;
     if (!canvasAssignmentId) {
-      const existingAssignment = await findAssignmentByExactName(title);
+      const existingAssignment = await findAssignmentByExactName(title, {
+        assignmentGroupId: groupId,
+        dueAt: dueAt || undefined,
+      });
       if (existingAssignment) {
         canvasAssignmentId = existingAssignment.id;
         discoveredAssignmentUrl = existingAssignment.htmlUrl;
@@ -296,7 +346,7 @@ Deno.serve(async (req) => {
         subject: subject || null,
         action: "assignment_deploy",
         status: "ERROR",
-        message: `${method} ${res.status}: ${errText}`,
+        message: `${method} ${res.status}: ${errText} [canvas_id:${canvasAssignmentId || "n/a"}]`,
         payload: payload,
       });
       await sb.from("deploy_notifications").insert({
@@ -314,7 +364,7 @@ Deno.serve(async (req) => {
     }
 
     const result = await res.json();
-    const assignmentId = String(result.id);
+    const assignmentId = String(result.id || canvasAssignmentId || "");
     const canvasUrl = result.html_url ||
       discoveredAssignmentUrl ||
       `${canvasBase}/courses/${courseId}/assignments/${assignmentId}`;
@@ -335,7 +385,7 @@ Deno.serve(async (req) => {
       action: "assignment_deploy",
       status: "DEPLOYED",
       canvas_url: canvasUrl,
-      message: `${isUpdate ? "Updated" : "Created"} assignment: ${title}`,
+      message: `${isUpdate ? "Updated" : "Created"} assignment: ${title} [canvas_id:${assignmentId || "n/a"}]`,
     });
     await sb.from("deploy_notifications").insert({
       level: "success",
