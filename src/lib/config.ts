@@ -48,7 +48,7 @@ export async function loadConfig(): Promise<AppConfig> {
       courseIds: { Math: 21957, Reading: 21919, Spelling: 21919, 'Language Arts': 21944, History: 21934, Science: 21970, Homeroom: 22254 },
       assignmentPrefixes: { Math: 'SM5:', Reading: 'RM4:', Spelling: 'RM4:', 'Language Arts': 'ELA4:', History: 'Hist:', Science: 'Sci:' },
       quarterColors: { Q1: '#00c0a5', Q2: '#0065a7', Q3: '#6644bb', Q4: '#c87800' },
-      powerUpMap: {},
+      powerUpMap: {} as Record<string, string>,
       spellingWordBank: {},
       autoLogic: {
         mathEvenOdd: true, mathTestTriple: true, readingTestPhrases: [],
@@ -61,12 +61,13 @@ export async function loadConfig(): Promise<AppConfig> {
   }
 
   const autoLogic = data.auto_logic as unknown as AutoLogic;
+  const powerUpMap = data.power_up_map as Record<string, string>;
   return {
     // Hardcoded course IDs always win over DB values to prevent drift
     courseIds: { ...(data.course_ids as Record<string, number>), ...COURSE_IDS },
     assignmentPrefixes: data.assignment_prefixes as Record<string, string>,
     quarterColors: data.quarter_colors as Record<string, string>,
-    powerUpMap: data.power_up_map as Record<string, string>,
+    powerUpMap,
     spellingWordBank: data.spelling_word_bank as Record<string, string[]>,
     autoLogic: { ...autoLogic, togetherLogicCourseId: TOGETHER_LOGIC_COURSE_ID },
     canvasBaseUrl: data.canvas_base_url || 'https://thalesacademy.instructure.com',
