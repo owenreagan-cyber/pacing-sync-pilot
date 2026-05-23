@@ -124,7 +124,7 @@ export function renderMathTestBody(ctx: MathTestContext): string {
 export function renderReadingTestBody(ctx: ReadingTestContext): string {
   const testNum = ctx.lessonNum ? parseInt(ctx.lessonNum, 10) : NaN;
   const isTest14 = Number.isFinite(testNum) && testNum === 14;
-  const hasValidTestNum = Number.isFinite(testNum) && testNum >= 1;
+  const hasCheckoutRules = Number.isFinite(testNum) && testNum >= 1 && testNum <= 13;
 
   const lessonLine = ctx.lessonNum
     ? `<p>We are preparing for <strong>Reading Mastery Test ${ctx.lessonNum}</strong>.</p>`
@@ -133,19 +133,16 @@ export function renderReadingTestBody(ctx: ReadingTestContext): string {
     ? ctx.readingTestPhrases
     : ['tracking and tapping', 'fluency and comprehension'];
   const phraseList = phrases.map((p) => `<strong>${p}</strong>`).join(', ');
-  const wpm = ctx.fluencyGoalWpm ?? 130;
-  const maxErrors = ctx.fluencyMaxErrors ?? 2;
+  const fluencyTarget = getReadingFluencyTarget(testNum);
+  const wpm = ctx.fluencyGoalWpm ?? fluencyTarget.wpm;
+  const maxErrors = ctx.fluencyMaxErrors ?? fluencyTarget.maxErrors;
+  const derivedCheckoutLesson = hasCheckoutRules ? `${testNum}0` : null;
 
-  // Auto-derive checkout lesson: append "0" to test number (e.g., test 4 → lesson 40)
-  const derivedCheckoutLesson = hasValidTestNum && !isTest14
-    ? String(testNum * 10)
-    : null;
-  const checkoutLesson = ctx.checkoutLesson ?? derivedCheckoutLesson;
-
-  const fluencySection = isTest14 ? '' : `
+  const fluencySection = isTest14 || !hasCheckoutRules ? '' : `
     <p><strong>Fluency goal:</strong> ${wpm} words per minute with ${maxErrors} or fewer errors.</p>
+    <p><strong>Error Guide:</strong> Use the Error Guide during practice to mark and correct errors while your child reads.</p>
     <p>Please practice nightly with your child and have them track each timed read in a fluency log (date, words read, errors).</p>
-    <p>For the Fluency Checkout, have your child read to the flower from <strong>Lesson ${checkoutLesson || ctx.lessonNum || 'current reading lesson'}</strong>.</p>`;
+    <p>For the Fluency Checkout, have your child read to the flower from <strong>Lesson ${derivedCheckoutLesson}</strong>.</p>`;
 
   return wrapper('Reading', `
     ${banner('Reading', `Reading Mastery Test ${ctx.lessonNum || ''}`.trim())}

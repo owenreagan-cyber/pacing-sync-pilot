@@ -61,6 +61,7 @@ describe('announcement templates', () => {
     });
     expect(html).toContain('Q4 Wk 6');
     expect(html).toContain('Fluency goal');
+    expect(html).toContain('Error Guide');
     expect(html).toContain('Challenge sentence');
     expect(html).toContain('Focus words (21–25)');
   });
@@ -80,6 +81,7 @@ describe('announcement templates', () => {
       testDay: 'Thursday',
     });
     expect(readingHtml).toContain('130 words per minute');
+    expect(readingHtml).toContain('Error Guide');
     expect(readingHtml).toContain('fluency log');
     expect(readingHtml).toContain('Study Guide (Blank)');
     expect(laHtml).toContain('Language Arts Chapter Test');
@@ -108,7 +110,9 @@ describe('announcement templates', () => {
       readingTestPhrases: [],
     });
     expect(html).toContain('Lesson 40');
+    expect(html).toContain('read to the flower from <strong>Lesson 40</strong>');
     expect(html).toContain('Fluency goal');
+    expect(html).toContain('Error Guide');
     expect(html).toContain('fluency log');
   });
 
