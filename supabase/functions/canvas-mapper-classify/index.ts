@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const SNIPPET_MAX_CHARS = 300;
 
 const classifyTool = {
   type: "function" as const,
@@ -18,7 +19,7 @@ const classifyTool = {
       properties: {
         resourceType: { type: "string" },
         purpose: { type: "array", items: { type: "string" } },
-        snippet: { type: "string", description: "First 200 chars summary/snippet from file content" },
+        snippet: { type: "string", description: "First 300 chars summary/snippet from file content" },
         suggestedName: { type: "string" },
         suggestedFolder: { type: "string" },
       },
@@ -35,6 +36,96 @@ interface MapperResult {
   suggestedName: string;
   suggestedFolder: string;
   alreadyFormatted?: boolean;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const hashBuf = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hashBuf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function tokenSet(input: string): Set<string> {
+  const tokens = input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 2);
+  return new Set(tokens);
+}
+
+function textSimilarity(a: string, b: string): number {
+  const setA = tokenSet(a);
+  const setB = tokenSet(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection += 1;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+interface DuplicateMatchResult {
+  isDuplicate: boolean;
+  canonicalFileId: string | null;
+}
+
+async function detectDuplicateMatch(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  orphan: { canvas_file_id: string; course_id: string | null },
+  fileHash: string,
+  snippet: string,
+): Promise<DuplicateMatchResult> {
+  const { data: exactMatches } = await supabase
+    .from("canvas_orphan_files")
+    .select("canvas_file_id, created_at")
+    .eq("file_hash", fileHash)
+    .neq("canvas_file_id", orphan.canvas_file_id)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (Array.isArray(exactMatches) && exactMatches.length > 0) {
+    return { isDuplicate: true, canonicalFileId: String(exactMatches[0].canvas_file_id) };
+  }
+
+  if (!snippet || snippet.length < 40) {
+    return { isDuplicate: false, canonicalFileId: null };
+  }
+
+  let nearDupQuery = supabase
+    .from("canvas_orphan_files")
+    .select("canvas_file_id, ai_snippet, created_at")
+    .neq("canvas_file_id", orphan.canvas_file_id)
+    .not("ai_snippet", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(200);
+
+  if (orphan.course_id) {
+    nearDupQuery = nearDupQuery.eq("course_id", orphan.course_id);
+  }
+
+  const { data: nearCandidates } = await nearDupQuery;
+  let bestMatchId: string | null = null;
+  let bestSimilarity = 0;
+  for (const candidate of nearCandidates ?? []) {
+    const similarity = textSimilarity(
+      normalizeSnippetText(String(candidate.ai_snippet ?? ""), SNIPPET_MAX_CHARS),
+      snippet,
+    );
+    if (similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatchId = String(candidate.canvas_file_id);
+    }
+  }
+
+  if (bestMatchId && bestSimilarity >= 0.92) {
+    return { isDuplicate: true, canonicalFileId: bestMatchId };
+  }
+
+  return { isDuplicate: false, canonicalFileId: null };
 }
 
 const mapperResponseSchema = {
@@ -63,6 +154,36 @@ function mimeFromName(name: string): string {
   return "image/png";
 }
 
+async function shouldChunkCourseLessons(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  courseId: string | null,
+  currentFileSource: string,
+): Promise<boolean> {
+  if (!courseId) return false;
+
+  const { data: courseRows } = await supabase
+    .from("canvas_orphan_files")
+    .select("original_name, ai_suggested_name, ai_lesson_ref")
+    .eq("course_id", courseId)
+    .limit(1000);
+
+  let maxLesson = 0;
+  for (const row of courseRows ?? []) {
+    const source = `${row.original_name ?? ""} ${row.ai_suggested_name ?? ""} ${row.ai_lesson_ref ?? ""}`.trim();
+    const lessonNum = parseLessonNumber(source);
+    if (lessonNum && lessonNum > maxLesson) {
+      maxLesson = lessonNum;
+    }
+  }
+
+  const currentLesson = parseLessonNumber(currentFileSource);
+  if (currentLesson && currentLesson > maxLesson) {
+    maxLesson = currentLesson;
+  }
+  return maxLesson > 20;
+}
+
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
   let binary = "";
   const chunk = 0x8000;
@@ -76,10 +197,22 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
   const raw = (name || "").trim();
   if (!raw) return fallback;
   const withoutVerboseSubtitle = raw.split(" - ")[0]?.trim() || raw;
-  return withoutVerboseSubtitle;
+  const withoutDateTokens = withoutVerboseSubtitle
+    .replace(/\b(19|20)\d{2}[-_ ]?(0[1-9]|1[0-2])[-_ ]?(0[1-9]|[12]\d|3[01])\b/g, " ")
+    .replace(/\b(0[1-9]|1[0-2])[-_ ](0[1-9]|[12]\d|3[01])[-_ ]((19|20)\d{2})\b/g, " ")
+    .replace(/\b\d{8}\b/g, " ");
+  const withoutVendorTokens = withoutDateTokens.replace(
+    /\b(v\d+(?:\.\d+)*|final|draft|copy|scan(?:ned)?|ocr|vendor|export|rev\d*|ver(?:sion)?\d*)\b/gi,
+    " ",
+  );
+  const normalized = withoutVendorTokens
+    .replace(/[_-]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return normalized || fallback;
 }
 
-function normalizeSnippetText(text: string, max = 200): string {
+function normalizeSnippetText(text: string, max = SNIPPET_MAX_CHARS): string {
   return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
@@ -154,7 +287,7 @@ function extractPdfSnippet(bytes: Uint8Array): string {
         }
       }
 
-      if (normalizeSnippetText(texts.join(" ")).length >= 200) break;
+      if (normalizeSnippetText(texts.join(" ")).length >= SNIPPET_MAX_CHARS) break;
     }
     return normalizeSnippetText(texts.join(" "));
   } catch {
@@ -196,11 +329,16 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   return null;
 }
 
-function applyFolderRules(result: MapperResult, originalName: string, fileContentSnippet: string): MapperResult {
+function applyFolderRules(
+  result: MapperResult,
+  originalName: string,
+  fileContentSnippet: string,
+  chunkLessonsByTen: boolean,
+): MapperResult {
   const conciseName = canonicalizeSuggestedName(result.suggestedName, originalName);
   const source = `${conciseName} ${originalName} ${fileContentSnippet}`.trim();
   const lessonNum = parseLessonNumber(source);
-  if (lessonNum && lessonNum > 20) {
+  if (lessonNum && chunkLessonsByTen) {
     const start = Math.floor((lessonNum - 1) / 10) * 10 + 1;
     const end = start + 9;
     const lower = source.toLowerCase();
@@ -266,34 +404,6 @@ Deno.serve(async (req) => {
     const displayName = String(orphan.original_name ?? "");
     const alreadyFormatted = displayName.includes(" ") && !displayName.includes("_");
 
-    if (alreadyFormatted) {
-      const mapped: MapperResult = {
-        resourceType: orphan.ai_resource_type ?? "Already Formatted",
-        purpose: orphan.ai_purpose ?? ["Already Formatted"],
-        snippet: String(orphan.ai_snippet ?? displayName).slice(0, 200),
-        suggestedName: displayName,
-        suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
-        alreadyFormatted: true,
-      };
-
-      await supabase
-        .from("canvas_orphan_files")
-        .update({
-          ai_resource_type: mapped.resourceType,
-          ai_purpose: mapped.purpose,
-          ai_snippet: mapped.snippet,
-          ai_suggested_name: mapped.suggestedName,
-          ai_suggested_folder: mapped.suggestedFolder,
-          ai_folder_chunked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("canvas_file_id", orphan.canvas_file_id);
-
-      return new Response(JSON.stringify(mapped), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     if (!orphan.canvas_url) {
       return new Response(JSON.stringify({ error: "Orphan file missing canvas_url" }), {
         status: 400,
@@ -315,44 +425,39 @@ Deno.serve(async (req) => {
     const extractedSnippet = extractFileContentSnippet(buf, mime);
     const normalizedExtractedSnippet = normalizeSnippetText(extractedSnippet);
     const fileContentSnippet = normalizedExtractedSnippet;
+    const fileHash = await sha256Hex(buf);
     const base64 = await bytesToBase64(buf);
+    const duplicateMatch = await detectDuplicateMatch(supabase, orphan, fileHash, fileContentSnippet);
 
-    if (!fileContentSnippet) {
-      const mapped = fallbackNeedsReview(
+    let mapped: MapperResult = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+    if (alreadyFormatted) {
+      mapped = {
+        resourceType: orphan.ai_resource_type ?? "Already Formatted",
+        purpose: orphan.ai_purpose ?? ["Already Formatted"],
+        snippet: normalizeSnippetText(String(orphan.ai_snippet ?? fileContentSnippet ?? displayName)),
+        suggestedName: displayName,
+        suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
+        alreadyFormatted: true,
+      };
+    } else if (!fileContentSnippet) {
+      mapped = fallbackNeedsReview(
         displayName || orphan.original_name || "",
         orphan.canvas_file_id,
         "No readable text extracted from file content.",
       );
-      await supabase
-        .from("canvas_orphan_files")
-        .update({
-          ai_resource_type: mapped.resourceType,
-          ai_purpose: mapped.purpose,
-          ai_snippet: mapped.snippet,
-          ai_suggested_name: mapped.suggestedName,
-          ai_suggested_folder: mapped.suggestedFolder,
-          ai_folder_chunked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("canvas_file_id", orphan.canvas_file_id);
-
-      return new Response(JSON.stringify(mapped), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const prompt = `You are a strict academic librarian for Canvas.
+    } else {
+      const prompt = `You are a strict academic librarian for Canvas.
 
 STRICT FOLDER RULES:
-1. ALWAYS group Math lessons (1-20, 21-40) into "Lessons 1-20", "Lessons 21-40".
+1. If the course has more than 20 lessons, group lesson files into ten-lesson folders ("Lessons 1-10", "Lessons 11-20", etc.).
 2. ALWAYS place Investigations in "Investigations".
 3. ALWAYS place Tests/Assessments in "Assessments".
-4. If a file is a generic "Lesson", route it to the specific "Lessons X-Y" folder.
+4. If a file is a generic "Lesson", route it to the most specific "Lessons X-Y" folder possible.
 5. IF the AI is unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
-- Friendly naming only (remove scanner/vendor junk codes).
-- snippet must use fileContentSnippet (<=200 chars).
+- Friendly Name: remove version numbers, dates, and vendor/noise strings (example: "v2_final", "scan_export", "vendor").
+- snippet must use fileContentSnippet (<=300 chars).
 - purpose must be an array of concise category tags.
 
 FILE CONTEXT:
@@ -362,70 +467,75 @@ Snippet: "${fileContentSnippet}".
 Output MUST be a valid JSON object matching the schema.
 Use the classify_mapper_file tool.`;
 
-    const response = await fetch(AI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } },
-            ],
-          },
-        ],
-        temperature: 0.1,
-        response_format: {
-          type: "json_schema",
-          json_schema: mapperResponseSchema,
+      const response = await fetch(AI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${lovableApiKey}`,
         },
-        tools: [classifyTool],
-        tool_choice: { type: "function", function: { name: "classify_mapper_file" } },
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return new Response(JSON.stringify({ error: `AI request failed: ${errText}` }), {
-        status: response.status === 429 ? 429 : response.status === 402 ? 402 : 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } },
+              ],
+            },
+          ],
+          temperature: 0.1,
+          response_format: {
+            type: "json_schema",
+            json_schema: mapperResponseSchema,
+          },
+          tools: [classifyTool],
+          tool_choice: { type: "function", function: { name: "classify_mapper_file" } },
+        }),
       });
-    }
 
-    const aiResult = await response.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-
-    let mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
-
-    if (toolCall?.function?.arguments) {
-      try {
-        const parsed = JSON.parse(toolCall.function.arguments);
-        const validated = toValidatedMapperResult(parsed);
-        if (validated) {
-          mapped = validated;
-        }
-      } catch {
-        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      if (!response.ok) {
+        const errText = await response.text();
+        return new Response(JSON.stringify({ error: `AI request failed: ${errText}` }), {
+          status: response.status === 429 ? 429 : response.status === 402 ? 402 : 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-    } else {
-      try {
-        const content = aiResult?.choices?.[0]?.message?.content;
-        if (typeof content === "string" && content.trim()) {
-          const parsed = JSON.parse(content);
+
+      const aiResult = await response.json();
+      const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
+
+      if (toolCall?.function?.arguments) {
+        try {
+          const parsed = JSON.parse(toolCall.function.arguments);
           const validated = toValidatedMapperResult(parsed);
           if (validated) {
             mapped = validated;
           }
+        } catch {
+          mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
         }
-      } catch {
-        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      } else {
+        try {
+          const content = aiResult?.choices?.[0]?.message?.content;
+          if (typeof content === "string" && content.trim()) {
+            const parsed = JSON.parse(content);
+            const validated = toValidatedMapperResult(parsed);
+            if (validated) {
+              mapped = validated;
+            }
+          }
+        } catch {
+          mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+        }
       }
     }
+
+    const shouldChunkLessons = await shouldChunkCourseLessons(
+      supabase,
+      orphan.course_id ? String(orphan.course_id) : null,
+      `${mapped.suggestedName} ${displayName} ${fileContentSnippet}`,
+    );
 
     mapped = applyFolderRules(
       {
@@ -437,7 +547,16 @@ Use the classify_mapper_file tool.`;
       },
       displayName || orphan.canvas_file_id,
       fileContentSnippet,
+      shouldChunkLessons,
     );
+
+    if (duplicateMatch.isDuplicate) {
+      mapped = {
+        ...mapped,
+        purpose: Array.from(new Set([...(mapped.purpose ?? []), "DUPLICATE"])),
+        suggestedFolder: "DUPLICATE",
+      };
+    }
 
     const aiFolderChunked = /\d+\s*-\s*\d+/.test(mapped.suggestedFolder);
 
@@ -450,11 +569,19 @@ Use the classify_mapper_file tool.`;
         ai_suggested_name: mapped.suggestedName,
         ai_suggested_folder: mapped.suggestedFolder,
         ai_folder_chunked: aiFolderChunked,
+        file_hash: fileHash,
+        is_duplicate: duplicateMatch.isDuplicate,
+        canonical_file_id: duplicateMatch.canonicalFileId,
         updated_at: new Date().toISOString(),
       })
       .eq("canvas_file_id", orphan.canvas_file_id);
 
-    return new Response(JSON.stringify(mapped), {
+    return new Response(JSON.stringify({
+      ...mapped,
+      fileHash,
+      isDuplicate: duplicateMatch.isDuplicate,
+      canonicalFileId: duplicateMatch.canonicalFileId,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
