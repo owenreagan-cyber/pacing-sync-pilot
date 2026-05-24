@@ -1101,7 +1101,7 @@ export default function FileOrganizerPage() {
           const result = (data as CanvasReadFilesResponse | null)?.results?.find(
             (entry) => String(entry.courseId ?? '') === String(courseId),
           );
-          const courseFiles = (result?.files ?? []) as CanvasReadFile[];
+          const courseFiles = result?.files ?? [];
           scanned += courseFiles.length;
 
           if (courseFiles.length > 0) {
