@@ -257,7 +257,6 @@ export default function AnnouncementCenterPage() {
                   readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
                   fluencyGoalWpm: rFluency.wpm,
                   fluencyMaxErrors: rFluency.maxErrors,
-                  checkoutLesson: rNum,
                   blankStudyGuideUrl: readingTest.canvas_url || undefined,
                   answerKeyUrl: readingTest.object_id?.startsWith('http') ? readingTest.object_id : undefined,
                 }
@@ -366,7 +365,7 @@ export default function AnnouncementCenterPage() {
           readingTestPhrases: config?.autoLogic?.readingTestPhrases || [],
           fluencyGoalWpm: rmFluency.wpm,
           fluencyMaxErrors: rmFluency.maxErrors,
-          checkoutLesson: rmCheckoutLesson || rmTestNum,
+          checkoutLesson: rmCheckoutLesson || (rmTestNum ? String(parseInt(rmTestNum, 10) * 10) : undefined),
         },
       });
       const { error } = await supabase.from('announcements').insert({
@@ -453,7 +452,7 @@ export default function AnnouncementCenterPage() {
           readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
           fluencyGoalWpm: rtWpm,
           fluencyMaxErrors: rtMaxErrors,
-          checkoutLesson: lessonNum,
+          checkoutLesson: undefined,
         });
         setFormTitle(`📚 Reading Mastery Test ${lessonNum} — Reminder`);
         setFormContent(html);
@@ -469,7 +468,7 @@ export default function AnnouncementCenterPage() {
                 readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
                 fluencyGoalWpm: cFluency.wpm,
                 fluencyMaxErrors: cFluency.maxErrors,
-                checkoutLesson: lessonNum,
+                checkoutLesson: undefined,
               }
             : undefined,
           spelling: sNum ? { testNum: sNum, wordBank: config.spellingWordBank || {} } : undefined,
