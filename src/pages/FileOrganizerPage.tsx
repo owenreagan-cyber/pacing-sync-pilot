@@ -85,7 +85,9 @@ interface MapperResult {
 const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const MAPPER_MAX_CONCURRENCY = 5;
 const EXECUTE_CHUNK_SIZE = 25;
+const MASS_ORG_CHUNK_SIZE = 5;
 const PAUSE_POLL_MS = 150;
+const UNTITLED_SCAN_PATTERN = /^(untitled|scan)/i;
 
 function getCurrentPath(row: OrphanFile): string {
   return (row.original_name ?? row.canvas_file_id).trim();
@@ -140,6 +142,8 @@ export default function FileOrganizerPage() {
   const [mapperPaused, setMapperPaused] = useState(false);
   const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
+  const [massOrganizing, setMassOrganizing] = useState(false);
+  const [cleanupUntitled, setCleanupUntitled] = useState(false);
   const mapperPausedRef = useRef(false);
   const mapperCancelRequestedRef = useRef(false);
   const mapperTableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -590,7 +594,184 @@ export default function FileOrganizerPage() {
     }
   }, [isDryRun, logMapperDryRunChanges, mapperRows]);
 
-  // Load batch progress on mount (for resume on reload)
+  /**
+   * Safe Execution Loop — processes files in chunks of MASS_ORG_CHUNK_SIZE (5)
+   * using Promise.all to avoid Canvas API rate-limiting (429 errors).
+   *
+   * Before each chunk the full "Before State" is written to dev_canvas_logs as a
+   * failsafe/rollback record.  On per-file failure the row is marked FAILED in
+   * canvas_orphan_files and the loop continues with the next chunk.  After all
+   * moves are complete, an optional step deletes empty Untitled/Scan source
+   * folders via the canvas-cleanup-folders edge function.
+   */
+  const handleExecuteMassOrganization = useCallback(async () => {
+    if (mapperRows.length === 0) {
+      toast.info('No mapped rows to execute');
+      return;
+    }
+
+    setMassOrganizing(true);
+    setMapperProgressLabel('Safe-executing rename & move');
+    setMapperProgress({ current: 0, total: mapperRows.length });
+
+    const rows = [...mapperRows];
+    try {
+      if (isDryRun) {
+        const logged = await logMapperDryRunChanges(rows);
+        setMapperProgress({ current: rows.length, total: rows.length });
+        toast.success(`Dry Run: Logged ${logged} changes to simulation database`);
+        return;
+      }
+
+      const chunks: OrphanFile[][] = [];
+      for (let i = 0; i < rows.length; i += MASS_ORG_CHUNK_SIZE) {
+        chunks.push(rows.slice(i, i + MASS_ORG_CHUNK_SIZE));
+      }
+
+      const succeededIds = new Set<string>();
+      const failedIds = new Set<string>();
+      let processed = 0;
+
+      for (const chunk of chunks) {
+        // Failsafe: log "Before State" for every file in the chunk before touching Canvas
+        const beforeStateEntries = chunk.map((row) => ({
+          deployment_mode: 'live',
+          action: 'mass_organization_before_state',
+          subject: 'File Organizer Safe Execution',
+          course_id: row.course_id ? Number.parseInt(row.course_id, 10) : null,
+          status: 'before_state',
+          metadata: {
+            fileId: row.canvas_file_id,
+            originalName: row.original_name,
+            currentStatus: row.status,
+            suggestedName: row.ai_suggested_name,
+            suggestedFolder: row.ai_suggested_folder,
+          },
+        }));
+        try {
+          await (supabase as any).from('dev_canvas_logs').insert(beforeStateEntries);
+        } catch {
+          // Non-fatal: don't abort the whole loop if logging fails
+          console.warn('handleExecuteMassOrganization: failed to write before-state to dev_canvas_logs');
+        }
+
+        // Process chunk concurrently — 5 files at a time to avoid 429s
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
+                body: {
+                  fileId: row.canvas_file_id,
+                  suggestedName: row.ai_suggested_name,
+                  suggestedFolder: row.ai_suggested_folder,
+                },
+              });
+              if (error) throw error;
+              if ((data)?.error) throw new Error((data).error);
+
+              // The edge function returns { results: [{fileId, ok, error?}] } for single items
+              const result = (data?.results as Array<{ fileId: string; ok: boolean; error?: string }>)?.[0];
+              if (result && !result.ok) {
+                throw new Error(result.error ?? 'Canvas execution failed');
+              }
+
+              succeededIds.add(row.canvas_file_id);
+            } catch (e: any) {
+              // Error recovery: mark the file as failed and continue with the next one
+              failedIds.add(row.canvas_file_id);
+              const errorMsg: string = e?.message ?? String(e);
+
+              await supabase
+                .from('canvas_orphan_files')
+                .update({ status: 'FAILED', updated_at: new Date().toISOString() })
+                .eq('canvas_file_id', row.canvas_file_id);
+
+              updateMapperRowField(row.canvas_file_id, { status: 'FAILED' });
+
+              try {
+                await (supabase as any).from('dev_canvas_logs').insert({
+                  deployment_mode: 'live',
+                  action: 'mass_organization_execute_failed',
+                  subject: 'File Organizer Safe Execution',
+                  course_id: row.course_id ? Number.parseInt(row.course_id, 10) : null,
+                  status: 'failed',
+                  error_message: `Failed - Manual Intervention Needed: ${errorMsg}`,
+                  metadata: {
+                    fileId: row.canvas_file_id,
+                    originalName: row.original_name,
+                    suggestedName: row.ai_suggested_name,
+                    suggestedFolder: row.ai_suggested_folder,
+                    error: errorMsg,
+                  },
+                });
+              } catch {
+                // Non-fatal
+              }
+            } finally {
+              processed += 1;
+              setMapperProgress({ current: processed, total: rows.length });
+            }
+          }),
+        );
+
+        // Brief pause between chunks to further reduce 429 risk
+        await sleep(200);
+      }
+
+      // Remove succeeded files from the local UI queue
+      setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
+      setFiles((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
+
+      // Auto-cleanup: delete empty source folders that match the Untitled/Scan pattern
+      if (cleanupUntitled && succeededIds.size > 0) {
+        try {
+          // Check whether any successfully-moved rows came from an Untitled/Scan context.
+          // We probe the first path segment of original_name (when it contains '/') or
+          // the first path segment of ai_suggested_folder as a heuristic.
+          const hasUntitledScanSource = rows.some((row) => {
+            if (!succeededIds.has(row.canvas_file_id)) return false;
+            const nameParts = (row.original_name ?? '').split('/');
+            const firstSegment = (nameParts.length > 1 ? nameParts[0] : row.ai_suggested_folder ?? '').trim();
+            return firstSegment.length > 0 && UNTITLED_SCAN_PATTERN.test(firstSegment);
+          });
+
+          if (hasUntitledScanSource) {
+            // canvas-cleanup-folders only deletes truly empty folders (files_count === 0),
+            // so it is safe to run unconditionally after a mass move.
+            const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
+              'canvas-cleanup-folders',
+              { body: { dryRun: false } },
+            );
+            if (cleanupError) throw cleanupError;
+            if ((cleanupData)?.error) throw new Error((cleanupData).error);
+            const deleted = (cleanupData)?.summary?.foldersDeleted ?? 0;
+            if (deleted > 0) {
+              toast.info(`Auto-cleanup: Deleted ${deleted} empty folder(s) matching Untitled/Scan`);
+            }
+          }
+        } catch (e: any) {
+          toast.warning('Auto-cleanup failed', { description: e?.message ?? String(e) });
+        }
+      }
+
+      if (failedIds.size > 0) {
+        toast.warning('Mass organization completed with failures', {
+          description: `${succeededIds.size} applied, ${failedIds.size} marked "Failed - Manual Intervention Needed"`,
+        });
+      } else {
+        toast.success('Mass organization complete', {
+          description: `${succeededIds.size} file(s) renamed & moved`,
+        });
+      }
+    } catch (e: any) {
+      toast.error('Mass organization failed', { description: e?.message ?? String(e) });
+    } finally {
+      setMassOrganizing(false);
+      setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
+    }
+  }, [cleanupUntitled, isDryRun, logMapperDryRunChanges, mapperRows, updateMapperRowField]);
+
+
   const loadBatchProgress = useCallback(async () => {
     const { data: job } = await supabase
       .from('automation_jobs')
@@ -1240,7 +1421,7 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   onClick={mapCourseSequentially}
-                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || mapperRows.length === 0}
+                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1253,7 +1434,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={mapAllCoursesSequentially}
-                  disabled={mapperRunning || mapperExecuting || mapperLoading}
+                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1266,7 +1447,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="default"
                   onClick={executeMapperBulk}
-                  disabled={mapperExecuting || mapperRunning || mapperRows.length === 0}
+                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0}
                   className="gap-1.5"
                 >
                   {mapperExecuting ? (
@@ -1276,15 +1457,39 @@ export default function FileOrganizerPage() {
                   )}
                   Execute Rename & Move
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={handleExecuteMassOrganization}
+                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0}
+                  className="gap-1.5"
+                >
+                  {massOrganizing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {massOrganizing ? 'Organizing…' : 'Safe Execute (Mass Organize)'}
+                </Button>
                 <div className="flex items-center gap-2 ml-1 mb-1">
                   <Switch
                     id="mapper-dry-run"
                     checked={isDryRun}
                     onCheckedChange={setIsDryRun}
-                    disabled={mapperRunning || mapperExecuting}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing}
                   />
                   <Label htmlFor="mapper-dry-run" className="text-xs whitespace-nowrap">
                     Enable Dry Run (Log Only)
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2 ml-1 mb-1">
+                  <Switch
+                    id="cleanup-untitled"
+                    checked={cleanupUntitled}
+                    onCheckedChange={setCleanupUntitled}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing}
+                  />
+                  <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
+                    Auto-delete empty Untitled/Scan folders
                   </Label>
                 </div>
               </div>
@@ -1420,7 +1625,9 @@ export default function FileOrganizerPage() {
                             <TableRow
                               key={row.canvas_file_id}
                               className={
-                                String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
+                                row.status === 'FAILED'
+                                  ? 'bg-destructive/5 border-l-2 border-l-destructive'
+                                  : String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
                                   ? 'bg-amber-50/70'
                                   : undefined
                               }
@@ -1486,24 +1693,32 @@ export default function FileOrganizerPage() {
                                 )}
                               </TableCell>
                               <TableCell>
-                                <Button
-                                  size="sm"
-                                  onClick={() => executeMapperRow(row)}
-                                  disabled={
-                                    mapperRunning ||
-                                    mapperExecuting ||
-                                    rowExecutingId === row.canvas_file_id ||
-                                    !row.ai_suggested_name?.trim()
-                                  }
-                                  className="gap-1.5"
-                                >
-                                  {rowExecutingId === row.canvas_file_id ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <CheckCircle2 className="h-3.5 w-3.5" />
-                                  )}
-                                  Apply to Canvas
-                                </Button>
+                                {row.status === 'FAILED' ? (
+                                  <Badge variant="destructive" className="text-[10px] gap-1">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    Failed – Manual Intervention Needed
+                                  </Badge>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => executeMapperRow(row)}
+                                    disabled={
+                                      mapperRunning ||
+                                      mapperExecuting ||
+                                      massOrganizing ||
+                                      rowExecutingId === row.canvas_file_id ||
+                                      !row.ai_suggested_name?.trim()
+                                    }
+                                    className="gap-1.5"
+                                  >
+                                    {rowExecutingId === row.canvas_file_id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                    )}
+                                    Apply to Canvas
+                                  </Button>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
