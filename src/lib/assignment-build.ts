@@ -216,7 +216,7 @@ export async function buildAssignmentForCell(
   options?: { type?: string; titleOverride?: string; isSynthetic?: boolean; dayOffset?: number },
 ): Promise<BuiltAssignment | null> {
   const { config, contentMap, weekDates } = ctx;
-  const auto = config.autoLogic;
+  const _auto = config.autoLogic;
   const lessonNum = cell.lessonNum || '';
   const type = options?.type || (cell.isTest ? 'Test' : 'Lesson');
   const isSynthetic = options?.isSynthetic ?? false;

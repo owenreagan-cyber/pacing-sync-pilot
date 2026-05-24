@@ -37,8 +37,8 @@ export async function getSuggestions(
       const v = row.pattern_value as { subject?: string; value?: string };
       return {
         value: String(v?.value ?? ''),
-        confidence: row.confidence as number,
-        count: row.occurrence_count as number,
+        confidence: row.confidence,
+        count: row.occurrence_count,
         _subject: v?.subject ?? '',
       };
     })
@@ -61,7 +61,7 @@ export async function getStyleConfidence(): Promise<{
   if (!data || data.length === 0) return { overall: 0, byType: {} };
   const byType: Record<string, number[]> = {};
   for (const r of data) {
-    (byType[r.pattern_type as string] ||= []).push(r.confidence as number);
+    (byType[r.pattern_type] ||= []).push(r.confidence);
   }
   const avgs: Record<string, number> = {};
   for (const [t, list] of Object.entries(byType)) {

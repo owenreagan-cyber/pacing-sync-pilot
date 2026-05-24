@@ -280,7 +280,7 @@ export default function FileOrganizerPage() {
           body: { canvasFileId: row.canvas_file_id },
         });
         if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
+        if ((data)?.error) throw new Error((data).error);
 
         const mappedRow = data as MapperResult;
         updateMapperRowField(row.canvas_file_id, {
@@ -486,7 +486,7 @@ export default function FileOrganizerPage() {
           },
         });
         if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
+        if ((data)?.error) throw new Error((data).error);
         setMapperRows((prev) => prev.filter((r) => r.canvas_file_id !== row.canvas_file_id));
         setFiles((prev) => prev.filter((r) => r.canvas_file_id !== row.canvas_file_id));
         toast.success('Applied to Canvas', { description: row.ai_suggested_name ?? row.original_name ?? '' });
@@ -535,9 +535,9 @@ export default function FileOrganizerPage() {
           body: { items: chunk },
         });
         if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
+        if ((data)?.error) throw new Error((data).error);
 
-        const chunkResults = ((data as any)?.results as Array<{ fileId: string; ok: boolean }>) ?? [];
+        const chunkResults = ((data)?.results as Array<{ fileId: string; ok: boolean }>) ?? [];
         chunkResults
           .filter((r) => r.ok)
           .forEach((r) => succeededIds.add(String(r.fileId)));
@@ -577,14 +577,14 @@ export default function FileOrganizerPage() {
   }, []);
 
   useEffect(() => {
-    loadFiles();
-    loadBatchProgress();
-    loadCourseOptions();
+    void loadFiles();
+    void loadBatchProgress();
+    void loadCourseOptions();
   }, [loadBatchProgress, loadCourseOptions, loadFiles]);
 
   useEffect(() => {
     if (mapperCourseId) {
-      loadMapperRows();
+      void loadMapperRows();
     }
   }, [loadMapperRows, mapperCourseId]);
 
@@ -645,11 +645,11 @@ export default function FileOrganizerPage() {
         body: { canvasFileId: selected.canvas_file_id },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const suggested = (data as any)?.suggested_name ?? '';
-      const lessonRef = (data as any)?.ai_lesson_ref ?? '';
-      const suggestedFolder = (data as any)?.suggestedFolder ?? (data as any)?.ai_suggested_folder ?? null;
+      const suggested = (data)?.suggested_name ?? '';
+      const lessonRef = (data)?.ai_lesson_ref ?? '';
+      const suggestedFolder = (data)?.suggestedFolder ?? (data)?.ai_suggested_folder ?? null;
       setEditName(suggested);
       setEditLessonRef(lessonRef);
       setFiles((prev) =>
@@ -681,9 +681,9 @@ export default function FileOrganizerPage() {
         body: { batchSize: 25 },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       setBatchProgress({
         filesProcessed: result.filesProcessed ?? 0,
         filesTotal: result.filesTotal ?? 0,
@@ -729,7 +729,7 @@ export default function FileOrganizerPage() {
         body: { fileId: selected.canvas_file_id },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
       setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
@@ -749,9 +749,9 @@ export default function FileOrganizerPage() {
         body: { deleteDuplicates: false },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Found ${result.duplicatesFound} duplicate(s)`, {
         description: 'Duplicate files are now highlighted in red.',
       });
@@ -776,9 +776,9 @@ export default function FileOrganizerPage() {
         body: { deleteDuplicates: true },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Deleted ${result.duplicatesDeleted} duplicate(s)`, {
         description: 'Canonical versions have been preserved.',
       });
@@ -798,9 +798,9 @@ export default function FileOrganizerPage() {
         body: { dryRun: false },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Cleaned ${result.summary?.foldersDeleted ?? 0} empty folder(s)`, {
         description: `Scanned ${result.summary?.coursesScanned ?? 0} course(s)`,
       });

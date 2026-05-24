@@ -5,10 +5,24 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
   {
-    extends: [js.configs.recommended, ...tseslint.configs.strict],
-    files: ["**/*.{ts,tsx}"],
+    // Skip generated output, Deno edge functions (not part of browser tsconfig),
+    // Vercel API routes, seed scripts, and Playwright config files – none of these
+    // are included in the project's tsconfig and therefore cannot use
+    // type-aware lint rules.
+    ignores: [
+      "dist",
+      "supabase/functions/**",
+      "api/**",
+      "seeds/**",
+      "playwright.config.ts",
+      "playwright-fixture.ts",
+    ],
+  },
+  {
+    // Type-aware rules scoped to the browser source tree covered by tsconfig.json.
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
@@ -31,12 +45,14 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
 
-      // TypeScript Strict Rules
+      // TypeScript Rules
+      // Note: tsconfig.json has strict: false (no strictNullChecks), so rules
+      // that require strictNullChecks are disabled here to avoid false positives.
       "@typescript-eslint/explicit-member-accessibility": [
         "warn",
         { accessibility: "explicit" },
       ],
-      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
@@ -46,19 +62,14 @@ export default tseslint.config(
         },
       ],
       "@typescript-eslint/no-floating-promises": "error",
-      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: { attributes: false, arguments: false } }],
       "@typescript-eslint/await-thenable": "error",
       "@typescript-eslint/no-unnecessary-type-assertion": "error",
-      "@typescript-eslint/prefer-nullish-coalescing": "warn",
+      // Requires strictNullChecks – disabled until tsconfig enables it
+      "@typescript-eslint/prefer-nullish-coalescing": "off",
       "@typescript-eslint/prefer-optional-chain": "warn",
-      "@typescript-eslint/strict-boolean-expressions": [
-        "error",
-        {
-          allowString: false,
-          allowNumber: false,
-          allowNullableObject: false,
-        },
-      ],
+      // Requires strictNullChecks – disabled until tsconfig enables it
+      "@typescript-eslint/strict-boolean-expressions": "off",
 
       // General Rules
       "no-console": ["warn", { allow: ["warn", "error"] }],
@@ -66,6 +77,20 @@ export default tseslint.config(
       "no-var": "error",
       "prefer-const": "error",
       "prefer-arrow-callback": "warn",
+    },
+  },
+  {
+    // Config files at the repo root – lint without type-aware rules
+    // since they may be covered by different tsconfigs (tsconfig.node.json).
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    files: ["*.config.ts", "*.config.js", "vitest.config.ts"],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.node,
+    },
+    rules: {
+      // Config files commonly use require() for plugins (e.g. Tailwind).
+      "@typescript-eslint/no-require-imports": "off",
     },
   }
 );

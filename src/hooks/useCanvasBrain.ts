@@ -36,7 +36,7 @@ export function useSyncNow() {
     onSuccess: (data) => {
       if (data?.ok) toast.success('Canvas Brain sync complete');
       else toast.warning('Sync completed with errors — check log');
-      qc.invalidateQueries({ queryKey: ['canvas-brain'] });
+      void qc.invalidateQueries({ queryKey: ['canvas-brain'] });
     },
     onError: (e: Error) => toast.error(`Sync failed: ${e.message}`),
   });

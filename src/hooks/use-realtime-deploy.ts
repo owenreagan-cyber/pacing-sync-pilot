@@ -34,7 +34,7 @@ export function useRealtimeDeploy(onEvent?: (event: DeployEvent) => void) {
             toast.success(label, {
               description: event.message || 'Successfully deployed',
               action: event.canvas_url
-                ? { label: 'Open', onClick: () => window.open(event.canvas_url!, '_blank') }
+                ? { label: 'Open', onClick: () => window.open(event.canvas_url, '_blank') }
                 : undefined,
             });
           } else if (event.status === 'ERROR') {
@@ -47,7 +47,7 @@ export function useRealtimeDeploy(onEvent?: (event: DeployEvent) => void) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [onEvent]);
 }

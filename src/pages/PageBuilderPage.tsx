@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Globe, Rocket, Eye, Code, ExternalLink, Copy, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,14 +24,13 @@ function parseSubjectResources(
   if (!raw || !Array.isArray(raw)) return [];
   return raw
     .filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object')
-    .filter((r) => typeof r.label === 'string' && (r.label as string).trim() !== '')
+    .filter((r) => typeof r.label === 'string' && (r.label).trim() !== '')
     .map((r) => ({
       label: r.label as string,
-      url:   typeof r.url === 'string' && (r.url as string).trim() ? r.url as string : undefined,
-      group: typeof r.group === 'string' && (r.group as string).trim() ? r.group as string : undefined,
+      url:   typeof r.url === 'string' && (r.url).trim() ? r.url : undefined,
+      group: typeof r.group === 'string' && (r.group).trim() ? r.group : undefined,
     }));
 }
-import { callEdge } from '@/lib/edge';
 import { useRealtimeDeploy } from '@/hooks/use-realtime-deploy';
 import { useSystemStore } from '@/store/useSystemStore';
 import SafetyDiffModal from '@/components/SafetyDiffModal';
@@ -68,12 +67,6 @@ interface WeekOption {
   subject_reminders: Record<string, string> | null;
   subject_resources: Record<string, unknown[]> | null;
   active_hs_subject?: string | null;
-}
-
-interface DeployResult {
-  status: string;
-  canvasUrl?: string;
-  error?: string;
 }
 
 export default function PageBuilderPage() {
@@ -195,7 +188,7 @@ export default function PageBuilderPage() {
 
     if (activeSubject === 'Homeroom') {
       // Collect upcoming tests across all subjects this week
-      const tests = rows
+      const _tests = rows
         .filter((r) => r.type === 'Test' || (r.in_class || '').toLowerCase().includes('test'))
         .map((r) => `${r.day}: ${r.subject}${r.lesson_num ? ` \u2014 ${r.lesson_num}` : ''}`);
       return generateHomeroomPageHtml({
@@ -218,7 +211,7 @@ export default function PageBuilderPage() {
     const activeHs = selectedWeek.active_hs_subject;
     if ((activeSubject === 'History' || activeSubject === 'Science') && activeHs && activeHs !== activeSubject) {
       return generateRedirectPageHtml({
-        thisSubject: activeSubject as 'History' | 'Science',
+        thisSubject: activeSubject,
         activeSubject: activeHs as 'History' | 'Science',
         weekNum: selectedWeek.week_num,
         quarter: selectedWeek.quarter,
@@ -305,7 +298,7 @@ export default function PageBuilderPage() {
 
     if (subject === 'Homeroom') {
       courseId = config.courseIds['Homeroom'];
-      const tests = rows
+      const _tests = rows
         .filter((r) => r.type === 'Test' || (r.in_class || '').toLowerCase().includes('test'))
         .map((r) => `${r.day}: ${r.subject}${r.lesson_num ? ` \u2014 ${r.lesson_num}` : ''}`);
       html = generateHomeroomPageHtml({
@@ -331,7 +324,7 @@ export default function PageBuilderPage() {
         // Deploy redirect page instead of full agenda
         courseId = config.courseIds[subject];
         html = generateRedirectPageHtml({
-          thisSubject: subject as 'History' | 'Science',
+          thisSubject: subject,
           activeSubject: activeHs as 'History' | 'Science',
           weekNum: selectedWeek.week_num,
           quarter: selectedWeek.quarter,
@@ -412,7 +405,7 @@ export default function PageBuilderPage() {
 
 
       if (result.status === 'DEPLOYED' || result.status === 'NO_CHANGE') {
-        setDeployStatuses((p) => ({ ...p, [subject]: { status: result.status!, canvasUrl: result.canvasUrl } }));
+        setDeployStatuses((p) => ({ ...p, [subject]: { status: result.status, canvasUrl: result.canvasUrl } }));
         if (result.status === 'DEPLOYED') void logDeployHabit(subject);
         toast.success(`${subject} agenda ${result.status === 'NO_CHANGE' ? 'up to date' : 'deployed & set as homepage'}`, {
           action: result.canvasUrl ? { label: 'Open', onClick: () => window.open(result.canvasUrl, '_blank') } : undefined,
@@ -472,7 +465,7 @@ export default function PageBuilderPage() {
   };
 
   const copyHtml = () => {
-    navigator.clipboard.writeText(generatedHtml);
+    void navigator.clipboard.writeText(generatedHtml);
     toast.success('HTML copied!');
   };
 

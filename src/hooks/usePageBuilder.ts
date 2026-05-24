@@ -68,7 +68,7 @@ export function mergeReadingSpellingRows<T extends MergeableRow>(rows: T[]): T[]
   // appended to in_class / at_home via <br/>, but Spelling's lesson_num
   // must NEVER bleed onto the merged row (that would mislabel Reading
   // homework with Spelling's lesson number).
-  for (const [day, dayRows] of buckets) {
+  for (const [_day, dayRows] of buckets) {
     if (dayRows.length === 0) continue;
 
     const reading = dayRows.find((r) => r.subject === TOGETHER_PAGE_OWNER);

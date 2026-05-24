@@ -54,7 +54,7 @@ export default function PacingViewerPage() {
     setLoading(false);
   };
 
-  useEffect(() => { loadData(); }, [selectedMonth, selectedWeek]);
+  useEffect(() => { void loadData(); }, [selectedMonth, selectedWeek]);
 
   const getCell = (subject: string, day: string) =>
     rows.find((r) => r.subject === subject && r.day === day);

@@ -56,7 +56,7 @@ export function StyleSuggestions({ type, subject, label, onPick }: Props) {
             type="button"
             onClick={() => {
               if (onPick) onPick(s.value);
-              else navigator.clipboard.writeText(s.value);
+              else void navigator.clipboard.writeText(s.value);
               setCopiedIdx(i);
               toast.success(onPick ? 'Applied' : 'Copied');
               setTimeout(() => setCopiedIdx(null), 1200);

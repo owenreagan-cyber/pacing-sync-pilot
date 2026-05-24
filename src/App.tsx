@@ -41,7 +41,7 @@ const QUARTER_HEX: Record<string, string> = {
   Q4: '#c87800',
 };
 
-function AppContent({ config }: { config: AppConfig }) {
+function AppContent({ config: _config }: { config: AppConfig }) {
   const [activeQuarter, setActiveQuarter] = useState<string>('Q4');
   const [activeWeek, setActiveWeek] = useState<number>(4);
   const [riskLevel, setRiskLevel] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
@@ -60,7 +60,7 @@ function AppContent({ config }: { config: AppConfig }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       const apply = (q: string, w: number) => {
         if (cancelled) return;
         setActiveQuarter(q);
@@ -107,8 +107,8 @@ function AppContent({ config }: { config: AppConfig }) {
           .not('week_id', 'is', null);
         const ids = Array.from(new Set((rows || []).map((r: any) => r.week_id)));
         if (ids.length && allWeeks) {
-          const candidates = allWeeks.filter((w: any) =>
-            ids.includes((w as any).id),
+          const _candidates = allWeeks.filter((w: any) =>
+            ids.includes((w).id),
           ) as any[];
           // Re-fetch with id since prior select didn't include it
           const { data: weeksWithId } = await supabase
@@ -221,7 +221,7 @@ const App = () => {
 
   useEffect(() => {
     runLoadConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   if (error) {

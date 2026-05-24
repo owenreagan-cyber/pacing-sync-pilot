@@ -48,7 +48,7 @@ export function useDraftAnnouncement() {
       return data as AnnouncementDraft;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['announcements'] });
+      void qc.invalidateQueries({ queryKey: ['announcements'] });
       toast.success('Draft saved');
     },
     onError: (e: Error) => toast.error(`Draft failed: ${e.message}`),
@@ -69,7 +69,7 @@ export function useScheduleAnnouncement() {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['announcements'] });
+      void qc.invalidateQueries({ queryKey: ['announcements'] });
       toast.success('Announcement scheduled');
     },
     onError: (e: Error) => toast.error(`Schedule failed: ${e.message}`),
@@ -81,7 +81,7 @@ export function usePostNow() {
   return useMutation({
     mutationFn: (id: string) => callEdge<{ status?: string; message?: string }>('canvas-post-announcement', { id }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['announcements'] });
+      void qc.invalidateQueries({ queryKey: ['announcements'] });
       if (data?.status === 'BLOCKED') toast.warning(data.message || 'Post blocked');
       else toast.success('Announcement posted');
     },

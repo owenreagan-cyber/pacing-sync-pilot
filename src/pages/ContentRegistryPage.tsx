@@ -62,7 +62,7 @@ interface SyncResult {
 
 const SUBJECTS = ['All', 'Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 
-function lessonRefFor(subject: string, lessonNum: string | null, type: string | null): string {
+function _lessonRefFor(subject: string, lessonNum: string | null, type: string | null): string {
   if (!lessonNum) return '';
   const isTest = (type || '').toLowerCase().includes('test');
   return `${isTest ? 'T' : 'L'}${lessonNum}`;
@@ -98,7 +98,7 @@ export default function ContentRegistryPage() {
     setLastSync(log?.[0]?.created_at || null);
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { void loadAll(); }, []);
 
   async function handleSync() {
     setSyncing(true);

@@ -9,12 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Tooltip,
   TooltipContent,
@@ -24,20 +20,16 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Rocket, Loader2, AlertCircle, ArrowRightLeft, ShieldCheck,
-  CheckCircle2, ChevronDown, Eye, SkipForward, Zap, FlaskConical,
+  ChevronDown, Eye, FlaskConical, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { useConfig, type AppConfig } from '@/lib/config';
+import { useConfig } from '@/lib/config';
 import { callEdge } from '@/lib/edge';
 import { useRealtimeDeploy } from '@/hooks/use-realtime-deploy';
 import { useSystemStore } from '@/store/useSystemStore';
 import SafetyDiffModal from '@/components/SafetyDiffModal';
-import {
-  TOGETHER_LOGIC_COURSE_ID,
-  getCourseId,
-} from '@/lib/course-ids';
-import { logEdit, learnFromEdit, logDeployHabit } from '@/lib/teacher-memory';
+import { logDeployHabit } from '@/lib/teacher-memory';
 import {
   buildAssignmentForCell,
   type BuiltAssignment,
@@ -48,11 +40,8 @@ import {
 } from '@/lib/canvas-html';
 import { runQ4W5Tests, type TestResult } from '@/lib/test-runner';
 import type { ContentMapEntry } from '@/lib/auto-link';
-import { logDeployHabit } from '@/lib/teacher-memory';
-import { validateDeployment, type ValidationResult } from '@/lib/pre-deploy-validator';
 import { getPacingWeekDatesISO } from '@/lib/pacing-week';
 import { isDryRunMode } from '@/lib/env/canvas-mode';
-import { AlertTriangle } from 'lucide-react';
 
 const SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'];
 const FILTER_CHIPS = ['All', 'Math', 'Reading', 'Language Arts', 'Spelling'];
@@ -101,14 +90,14 @@ export default function AssignmentsPage() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [contentMap, setContentMap] = useState<ContentMapEntry[]>([]);
   const [pacingDbRows, setPacingDbRows] = useState<PacingDbRow[]>([]);
-  const [weekId, setWeekId] = useState<string | null>(null);
+  const [_weekId, setWeekId] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<string>('All');
   const [deployResults, setDeployResults] = useState<Record<string, DeployStatus>>({});
   const [forcedRows, setForcedRows] = useState<Set<string>>(new Set());
-  const [editOverrides, setEditOverrides] = useState<
+  const [editOverrides, _setEditOverrides] = useState<
     Record<string, Partial<{ title: string; dueDate: string; points: number; gradingType: string }>>
   >({});
   const [testMode, setTestMode] = useState(false);
@@ -181,7 +170,7 @@ export default function AssignmentsPage() {
 
   // Build preview rows whenever inputs change — sourced from Supabase pacing_rows
   useEffect(() => {
-    (async () => {
+    void (async () => {
       if (!selectedMonth || !selectedWeek || !config) return;
       const Q = selectedMonth;
       const W = selectedWeek;

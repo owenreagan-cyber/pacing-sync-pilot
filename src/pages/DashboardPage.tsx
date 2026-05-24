@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Activity, Globe, ClipboardList, Megaphone, AlertTriangle,
-  CheckCircle2, Clock, TrendingUp, BookOpen, FileText, Calendar,
+  CheckCircle2, Clock, BookOpen, FileText, Calendar,
   Rocket, AlertCircle,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -12,7 +12,6 @@ import { useNavigate } from 'react-router-dom';
 import { evaluateWeekRisk, type RiskRow } from '@/lib/risk-engine';
 import { QuickStats } from '@/components/dashboard/QuickStats';
 import { UpcomingPosts } from '@/components/dashboard/UpcomingPosts';
-import { useSystemStore } from '@/store/useSystemStore';
 import { getPacingWeekDateRange } from '@/lib/pacing-week';
 
 interface WeekSummary {
@@ -61,7 +60,7 @@ const SUBJECT_COLORS: Record<string, string> = {
 export default function DashboardPage({
   activeQuarter,
   activeWeek,
-  quarterColor,
+  quarterColor: _quarterColor,
 }: {
   activeQuarter: string;
   activeWeek: number;
@@ -70,7 +69,7 @@ export default function DashboardPage({
   const navigate = useNavigate();
   const [weekSummary, setWeekSummary] = useState<WeekSummary | null>(null);
   const [recentDeploys, setRecentDeploys] = useState<RecentDeploy[]>([]);
-  const [stats, setStats] = useState({ announcements: 0, pages: 0, files: 0 });
+  const [_stats, setStats] = useState({ announcements: 0, pages: 0, files: 0 });
   const [loading, setLoading] = useState(true);
   const [pacingRows, setPacingRows] = useState<PacingRow[]>([]);
   const [briefing, setBriefing] = useState<{
@@ -79,7 +78,7 @@ export default function DashboardPage({
   }>({ hasPacing: false, draftAnnouncements: 0, deployedPages: [], pendingSubjects: [] });
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       const { data: week } = await supabase.from('weeks').select('id')
         .eq('quarter', activeQuarter).eq('week_num', activeWeek).maybeSingle();
       if (!week) {
@@ -107,7 +106,7 @@ export default function DashboardPage({
   const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   useEffect(() => {
-    loadDashboard();
+    void loadDashboard();
   }, [activeQuarter, activeWeek]);
 
   const loadDashboard = async () => {

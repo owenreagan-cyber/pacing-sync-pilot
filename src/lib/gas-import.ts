@@ -32,7 +32,7 @@ export async function upsertPacingFromGAS(
   if (weekErr || !weekRow) {
     throw new Error(weekErr?.message || 'Failed to upsert week');
   }
-  const weekId = weekRow.id as string;
+  const weekId = weekRow.id;
 
   // 2) Build pacing rows
   const rows: any[] = [];

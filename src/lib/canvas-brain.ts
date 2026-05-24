@@ -25,7 +25,7 @@ export async function fetchSnapshotStats(): Promise<SnapshotStats> {
   const byCourse: Record<number, number> = {};
   for (const r of data ?? []) {
     byType[r.content_type] = (byType[r.content_type] ?? 0) + 1;
-    byCourse[r.course_id as number] = (byCourse[r.course_id as number] ?? 0) + 1;
+    byCourse[r.course_id] = (byCourse[r.course_id] ?? 0) + 1;
   }
   return { total: data?.length ?? 0, byType, byCourse };
 }

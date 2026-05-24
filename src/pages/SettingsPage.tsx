@@ -47,7 +47,7 @@ function CalendarTab() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const addEvent = async () => {
     if (!date || !label.trim()) {
@@ -64,14 +64,14 @@ function CalendarTab() {
     toast.success('Event added');
     setDate(''); setLabel(''); setEventType('holiday');
     clearSchoolCalendarCache();
-    load();
+    void load();
   };
 
   const deleteEvent = async (id: string) => {
     const { error } = await supabase.from('school_calendar').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     clearSchoolCalendarCache();
-    load();
+    void load();
   };
 
   return (
