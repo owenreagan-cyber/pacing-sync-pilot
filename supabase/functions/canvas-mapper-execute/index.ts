@@ -18,9 +18,55 @@ interface ExecuteResult {
   ok: boolean;
   error?: string;
   canvasUrl?: string | null;
+  sourceFolder?: {
+    courseId: number | null;
+    folderId: number;
+    fullName: string;
+    filesCount: number;
+    foldersCount: number;
+    parentFolderId: number | null;
+    isEmpty: boolean;
+  } | null;
 }
 
 const MAX_CANVAS_NAME_LENGTH = 120;
+
+interface CanvasFolder {
+  id: number;
+  full_name: string;
+  files_count?: number;
+  folders_count?: number;
+  parent_folder_id?: number | null;
+}
+
+interface CanvasFileDetails {
+  id: number;
+  display_name?: string;
+  folder_id?: number | null;
+}
+
+async function writeRollbackLog(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase.from("dev_canvas_logs").insert(entry);
+  if (error) {
+    console.warn("canvas-mapper-execute rollback log failed", error);
+  }
+}
+
+async function fetchFolderById(
+  baseUrl: string,
+  token: string,
+  folderId: number,
+): Promise<CanvasFolder | null> {
+  const resp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/folders/${folderId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) return null;
+  return await resp.json() as CanvasFolder;
+}
 
 function normalizeCanvasFileName(name: string): string {
   const sanitized = name
@@ -45,6 +91,13 @@ async function ensureFolder(
   token: string,
   courseId: string,
   folderPath: string,
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  rollbackContext: {
+    fileId: string;
+    originalName: string | null;
+    suggestedName: string;
+  },
 ): Promise<number | null> {
   const segments = folderPath
     .split("/")
@@ -74,6 +127,22 @@ async function ensureFolder(
       parentFolderId = existing;
       continue;
     }
+
+    await writeRollbackLog(supabase, {
+      deployment_mode: "live",
+      action: "canvas_folder_create_rollback",
+      subject: "File Organizer Execution",
+      course_id: Number.parseInt(courseId, 10),
+      status: "pending",
+      metadata: {
+        fileId: rollbackContext.fileId,
+        originalName: rollbackContext.originalName,
+        suggestedName: rollbackContext.suggestedName,
+        folderPath: currentPath,
+        parentFolderId,
+        rollbackAction: "Delete the created folder if this organization run is reverted and the folder is still unused.",
+      },
+    });
 
     const createResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/courses/${courseId}/folders`, {
       method: "POST",
@@ -121,9 +190,25 @@ async function executeOne(
       return { fileId: item.fileId, ok: false, error: "Missing suggestedName" };
     }
 
+    const fileResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/files/${row.canvas_file_id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const fileDetails = fileResp.ok
+      ? await fileResp.json() as CanvasFileDetails
+      : null;
+    const sourceFolderId = typeof fileDetails?.folder_id === "number" ? fileDetails.folder_id : null;
+    const sourceFolder = sourceFolderId !== null
+      ? await fetchFolderById(baseUrl, token, sourceFolderId)
+      : null;
+    const originalCanvasName = fileDetails?.display_name?.trim() || row.original_name || null;
+
     let targetFolderId: number | null = null;
     if (suggestedFolder && row.course_id) {
-      targetFolderId = await ensureFolder(baseUrl, token, String(row.course_id), suggestedFolder);
+      targetFolderId = await ensureFolder(baseUrl, token, String(row.course_id), suggestedFolder, supabase, {
+        fileId: String(row.canvas_file_id),
+        originalName: originalCanvasName,
+        suggestedName,
+      });
     }
 
     const payload: Record<string, unknown> = {
@@ -133,6 +218,28 @@ async function executeOne(
     if (targetFolderId !== null) {
       payload.parent_folder_id = targetFolderId;
     }
+
+    await writeRollbackLog(supabase, {
+      deployment_mode: "live",
+      action: "canvas_file_rename_move_rollback",
+      subject: "File Organizer Execution",
+      course_id: row.course_id ? Number.parseInt(String(row.course_id), 10) : null,
+      status: "pending",
+      metadata: {
+        fileId: row.canvas_file_id,
+        canvasFileId: row.canvas_file_id,
+        oldName: originalCanvasName,
+        oldFolderId: sourceFolderId,
+        oldFolder: sourceFolder?.full_name ?? null,
+        newName: suggestedName,
+        newFolder: suggestedFolder || null,
+        targetFolderId,
+        rollbackAction: {
+          restoreName: originalCanvasName,
+          restoreFolderId: sourceFolderId,
+        },
+      },
+    });
 
     const renameResp = await fetchCanvasWithRetry(`${baseUrl}/api/v1/files/${row.canvas_file_id}`, {
       method: "PUT",
@@ -169,7 +276,27 @@ async function executeOne(
       })
       .eq("canvas_file_id", row.canvas_file_id);
 
-    return { fileId: item.fileId, ok: true, canvasUrl: updatedCanvasUrl };
+    const refreshedSourceFolder = sourceFolderId !== null
+      ? await fetchFolderById(baseUrl, token, sourceFolderId)
+      : null;
+
+    return {
+      fileId: item.fileId,
+      ok: true,
+      canvasUrl: updatedCanvasUrl,
+      sourceFolder: refreshedSourceFolder
+        ? {
+          courseId: row.course_id ? Number.parseInt(String(row.course_id), 10) : null,
+          folderId: refreshedSourceFolder.id,
+          fullName: refreshedSourceFolder.full_name,
+          filesCount: refreshedSourceFolder.files_count ?? 0,
+          foldersCount: refreshedSourceFolder.folders_count ?? 0,
+          parentFolderId: refreshedSourceFolder.parent_folder_id ?? null,
+          isEmpty: (refreshedSourceFolder.files_count ?? 0) === 0 &&
+            (refreshedSourceFolder.folders_count ?? 0) === 0,
+        }
+        : null,
+    };
   } catch (e) {
     return {
       fileId: item.fileId,

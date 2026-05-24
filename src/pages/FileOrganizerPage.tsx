@@ -638,10 +638,10 @@ export default function FileOrganizerPage() {
    * using Promise.all to avoid Canvas API rate-limiting (429 errors).
    *
    * Before each chunk the full "Before State" is written to dev_canvas_logs as a
-   * failsafe/rollback record.  On per-file failure the row is marked FAILED in
-   * canvas_orphan_files and the loop continues with the next chunk.  After all
-   * moves are complete, an optional step deletes empty Untitled/Scan source
-   * folders via the canvas-cleanup-folders edge function.
+   * failsafe/rollback record. On per-file failure the row is marked FAILED in
+   * canvas_orphan_files and the loop continues with the next chunk. After the
+   * run, any source folders reported by Canvas as empty are deleted via the
+   * canvas-cleanup-folders edge function.
    */
   const handleExecuteMassOrganization = useCallback(async () => {
     if (mapperRows.length === 0) {
@@ -669,6 +669,7 @@ export default function FileOrganizerPage() {
 
       const succeededIds = new Set<string>();
       const failedIds = new Set<string>();
+      const emptiedSourceFolders = new Map<string, { courseId: number; folderId: number; folderName: string }>();
       let processed = 0;
 
       for (const chunk of chunks) {
@@ -709,12 +710,39 @@ export default function FileOrganizerPage() {
               if ((data)?.error) throw new Error((data).error);
 
               // The edge function returns { results: [{fileId, ok, error?}] } for single items
-              const result = (data?.results as Array<{ fileId: string; ok: boolean; error?: string }>)?.[0];
+              const result = (
+                data?.results as Array<{
+                  fileId: string;
+                  ok: boolean;
+                  error?: string;
+                  sourceFolder?: {
+                    courseId: number | null;
+                    folderId: number;
+                    fullName: string;
+                    parentFolderId: number | null;
+                    isEmpty: boolean;
+                  } | null;
+                }>
+              )?.[0];
               if (result && !result.ok) {
                 throw new Error(result.error ?? 'Canvas execution failed');
               }
 
               succeededIds.add(row.canvas_file_id);
+              if (
+                result?.sourceFolder?.isEmpty &&
+                result.sourceFolder.courseId !== null &&
+                result.sourceFolder.parentFolderId !== null
+              ) {
+                emptiedSourceFolders.set(
+                  `${result.sourceFolder.courseId}:${result.sourceFolder.folderId}`,
+                  {
+                    courseId: result.sourceFolder.courseId,
+                    folderId: result.sourceFolder.folderId,
+                    folderName: result.sourceFolder.fullName,
+                  },
+                );
+              }
             } catch (e: any) {
               // Error recovery: mark the file as failed and continue with the next one
               failedIds.add(row.canvas_file_id);
@@ -761,12 +789,30 @@ export default function FileOrganizerPage() {
       setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
       setFiles((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
 
-      // Auto-cleanup: delete empty source folders that match the Untitled/Scan pattern
+      if (emptiedSourceFolders.size > 0) {
+        try {
+          const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
+            'canvas-cleanup-folders',
+            {
+              body: {
+                dryRun: false,
+                targetFolders: Array.from(emptiedSourceFolders.values()),
+              },
+            },
+          );
+          if (cleanupError) throw cleanupError;
+          if ((cleanupData)?.error) throw new Error((cleanupData).error);
+          const deleted = (cleanupData)?.summary?.foldersDeleted ?? 0;
+          if (deleted > 0) {
+            toast.info(`Auto-cleanup: Deleted ${deleted} emptied source folder(s)`);
+          }
+        } catch (e: any) {
+          toast.warning('Auto-cleanup failed', { description: e?.message ?? String(e) });
+        }
+      }
+
       if (cleanupUntitled && succeededIds.size > 0) {
         try {
-          // Check whether any successfully-moved rows came from an Untitled/Scan context.
-          // We probe the first path segment of original_name (when it contains '/') or
-          // the first path segment of ai_suggested_folder as a heuristic.
           const hasUntitledScanSource = rows.some((row) => {
             if (!succeededIds.has(row.canvas_file_id)) return false;
             const nameParts = (row.original_name ?? '').split('/');
@@ -775,8 +821,6 @@ export default function FileOrganizerPage() {
           });
 
           if (hasUntitledScanSource) {
-            // canvas-cleanup-folders only deletes truly empty folders (files_count === 0),
-            // so it is safe to run unconditionally after a mass move.
             const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
               'canvas-cleanup-folders',
               { body: { dryRun: false } },
@@ -785,11 +829,11 @@ export default function FileOrganizerPage() {
             if ((cleanupData)?.error) throw new Error((cleanupData).error);
             const deleted = (cleanupData)?.summary?.foldersDeleted ?? 0;
             if (deleted > 0) {
-              toast.info(`Auto-cleanup: Deleted ${deleted} empty folder(s) matching Untitled/Scan`);
+              toast.info(`Extra cleanup: Deleted ${deleted} empty folder(s) matching Untitled/Scan`);
             }
           }
         } catch (e: any) {
-          toast.warning('Auto-cleanup failed', { description: e?.message ?? String(e) });
+          toast.warning('Extra cleanup failed', { description: e?.message ?? String(e) });
         }
       }
 
@@ -1691,7 +1735,7 @@ export default function FileOrganizerPage() {
                     disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning}
                   />
                   <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
-                    Auto-delete empty Untitled/Scan folders
+                    Also clean other empty Untitled/Scan folders
                   </Label>
                 </div>
               </div>
