@@ -22,9 +22,32 @@ Deno.serve(async (req) => {
 
     let total = 0;
     const errors: string[] = [];
+    const results: Array<{
+      courseId: number;
+      count: number;
+      files: Array<{
+        id: number;
+        display_name: string | null;
+        filename: string | null;
+        url: string | null;
+        content_type: string | null;
+        size: number | null;
+        updated_at: string | null;
+      }>;
+      error?: string;
+    }> = [];
     for (const courseId of courseIds) {
       try {
         const items = await listFiles(courseId);
+        const courseFiles = items.map((f) => ({
+          id: f.id,
+          display_name: f.display_name ?? null,
+          filename: f.filename ?? null,
+          url: f.url ?? null,
+          content_type: f.content_type ?? null,
+          size: f.size ?? null,
+          updated_at: f.updated_at ?? null,
+        }));
         for (const f of items) {
           await sb.from('canvas_snapshots').upsert(
             {
@@ -45,12 +68,24 @@ Deno.serve(async (req) => {
           );
           total++;
         }
+        results.push({
+          courseId,
+          count: courseFiles.length,
+          files: courseFiles,
+        });
       } catch (e) {
-        errors.push(`course ${courseId}: ${e instanceof Error ? e.message : String(e)}`);
+        const message = e instanceof Error ? e.message : String(e);
+        errors.push(`course ${courseId}: ${message}`);
+        results.push({
+          courseId,
+          count: 0,
+          files: [],
+          error: message,
+        });
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, total, courses: courseIds.length, errors }), {
+    return new Response(JSON.stringify({ ok: true, total, courses: courseIds.length, errors, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {

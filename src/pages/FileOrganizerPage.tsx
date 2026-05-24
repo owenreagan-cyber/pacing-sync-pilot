@@ -82,6 +82,24 @@ interface MapperResult {
   canonicalFileId?: string | null;
 }
 
+interface CanvasReadFile {
+  id: number | string;
+  display_name?: string | null;
+  filename?: string | null;
+  url?: string | null;
+}
+
+interface CanvasReadFilesResponse {
+  ok?: boolean;
+  total?: number;
+  errors?: string[];
+  results?: Array<{
+    courseId?: number;
+    files?: CanvasReadFile[];
+    error?: string;
+  }>;
+}
+
 const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const MAPPER_MAX_CONCURRENCY = 5;
 const EXECUTE_CHUNK_SIZE = 25;
@@ -144,6 +162,15 @@ export default function FileOrganizerPage() {
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
   const [massOrganizing, setMassOrganizing] = useState(false);
   const [cleanupUntitled, setCleanupUntitled] = useState(false);
+  const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
+  const [globalSweepProgress, setGlobalSweepProgress] = useState<{
+    current: number;
+    total: number;
+    label: string;
+    scanned: number;
+    upserted: number;
+    failedCourses: number;
+  } | null>(null);
   const mapperPausedRef = useRef(false);
   const mapperCancelRequestedRef = useRef(false);
   const mapperTableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -179,6 +206,14 @@ export default function FileOrganizerPage() {
         };
       }),
     [mapperRows],
+  );
+  const canvasCourseIds = useMemo(
+    () => Array.from(new Set(courseOptions.map((opt) => opt.value).filter(Boolean))),
+    [courseOptions],
+  );
+  const courseLabelById = useMemo(
+    () => new Map(courseOptions.map((opt) => [opt.value, opt.label] as const)),
+    [courseOptions],
   );
 
   const loadFiles = useCallback(async () => {
@@ -1022,6 +1057,102 @@ export default function FileOrganizerPage() {
     }
   };
 
+  const handleScanAllCourses = useCallback(async () => {
+    if (canvasCourseIds.length === 0) {
+      toast.error('No course IDs configured');
+      return;
+    }
+
+    setGlobalSweepRunning(true);
+    setGlobalSweepProgress({
+      current: 0,
+      total: canvasCourseIds.length,
+      label: '',
+      scanned: 0,
+      upserted: 0,
+      failedCourses: 0,
+    });
+
+    let scanned = 0;
+    let upserted = 0;
+    let failedCourses = 0;
+
+    try {
+      for (let i = 0; i < canvasCourseIds.length; i += 1) {
+        const courseId = canvasCourseIds[i];
+        const courseLabel = courseLabelById.get(courseId) ?? `Course ${courseId}`;
+
+        setGlobalSweepProgress({
+          current: i + 1,
+          total: canvasCourseIds.length,
+          label: courseLabel,
+          scanned,
+          upserted,
+          failedCourses,
+        });
+        await sleep(0);
+
+        try {
+          const { data, error } = await supabase.functions.invoke('canvas-read-files', {
+            body: { courseId: Number(courseId) },
+          });
+          if (error) throw error;
+
+          const result = (data as CanvasReadFilesResponse | null)?.results?.find(
+            (entry) => String(entry.courseId ?? '') === String(courseId),
+          );
+          const courseFiles = (result?.files ?? []) as CanvasReadFile[];
+          scanned += courseFiles.length;
+
+          if (courseFiles.length > 0) {
+            const rows = courseFiles.map((file) => ({
+              canvas_file_id: String(file.id),
+              course_id: String(courseId),
+              original_name: file.display_name ?? file.filename ?? null,
+              canvas_url: file.url ?? null,
+              status: 'PENDING',
+            }));
+
+            const { error: upsertError } = await supabase
+              .from('canvas_orphan_files')
+              .upsert(rows, { onConflict: 'canvas_file_id' });
+            if (upsertError) throw upsertError;
+            upserted += rows.length;
+          }
+        } catch (e) {
+          failedCourses += 1;
+          console.warn('Global registry sweep course failed', { courseId, error: e });
+        }
+
+        setGlobalSweepProgress({
+          current: i + 1,
+          total: canvasCourseIds.length,
+          label: courseLabel,
+          scanned,
+          upserted,
+          failedCourses,
+        });
+        await sleep(0);
+      }
+
+      if (failedCourses > 0) {
+        toast.warning('Global Registry Sweep completed with errors', {
+          description: `${upserted} file(s) upserted from ${canvasCourseIds.length - failedCourses}/${canvasCourseIds.length} course(s)`,
+        });
+      } else {
+        toast.success('Global Registry Sweep complete', {
+          description: `${upserted} file(s) upserted across ${canvasCourseIds.length} course(s)`,
+        });
+      }
+      await loadFiles();
+      if (mapperCourseId) {
+        await loadMapperRows();
+      }
+    } finally {
+      setGlobalSweepRunning(false);
+    }
+  }, [canvasCourseIds, courseLabelById, loadFiles, loadMapperRows, mapperCourseId]);
+
   const duplicateCount = files.filter((f) => f.is_duplicate).length;
   const progressPct =
     batchProgress && batchProgress.filesTotal > 0
@@ -1445,6 +1576,21 @@ export default function FileOrganizerPage() {
                   Map ALL Courses
                 </Button>
                 <Button
+                  variant="outline"
+                  onClick={handleScanAllCourses}
+                  disabled={
+                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                  }
+                  className="gap-1.5"
+                >
+                  {globalSweepRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Layers className="h-3.5 w-3.5" />
+                  )}
+                  {globalSweepRunning ? 'Scanning…' : 'Scan All Courses'}
+                </Button>
+                <Button
                   variant="default"
                   onClick={executeMapperBulk}
                   disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0}
@@ -1526,6 +1672,30 @@ export default function FileOrganizerPage() {
                       </Button>
                     </div>
                   )}
+                </div>
+              )}
+              {globalSweepProgress && (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">
+                    {globalSweepRunning
+                      ? `Scanning Course ${globalSweepProgress.current} of ${globalSweepProgress.total}...`
+                      : `Scanned ${globalSweepProgress.current} of ${globalSweepProgress.total} course(s)`}
+                    {globalSweepProgress.label ? ` · ${globalSweepProgress.label}` : ''}
+                  </p>
+                  <Progress
+                    value={
+                      globalSweepProgress.total > 0
+                        ? Math.round((globalSweepProgress.current / globalSweepProgress.total) * 100)
+                        : 0
+                    }
+                    className="h-2 max-w-lg"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {globalSweepProgress.upserted} file(s) upserted · {globalSweepProgress.scanned} scanned
+                    {globalSweepProgress.failedCourses > 0
+                      ? ` · ${globalSweepProgress.failedCourses} course(s) failed`
+                      : ''}
+                  </p>
                 </div>
               )}
             </CardContent>
