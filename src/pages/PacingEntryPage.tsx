@@ -155,7 +155,7 @@ function buildAtHome(subject: string, d: DayData, isFriday: boolean): string | n
     const num = parseInt(n);
     return `Lesson ${n} ${isNaN(num) ? '' : num % 2 === 0 ? 'Evens' : 'Odds'}`.trim();
   }
-  if (subject === 'Reading') return `Lesson ${n} Workbook and Comprehension`;
+  if (subject === 'Reading') return `Lesson ${n} Workbook`;
   return null;
 }
 
