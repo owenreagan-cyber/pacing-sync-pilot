@@ -283,7 +283,8 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
         const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
         const matchesTest = matchesLessonNumber(summary, String(testNum));
-        const isBlank = summary.includes('blank') || !url.toLowerCase().includes('%completed%');
+        const hasCompletedMarker = /%[^%]*completed[^%]*%/i.test(url);
+        const isBlank = summary.includes('blank') || !hasCompletedMarker;
         return isStudyGuide && matchesTest && isBlank;
       });
       const completedStudyGuide = contentMap.find((entry) => {
@@ -292,7 +293,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
         const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
         const matchesTest = matchesLessonNumber(summary, String(testNum));
-        const isCompleted = url.toLowerCase().includes('%completed%');
+        const isCompleted = /%[^%]*completed[^%]*%/i.test(url);
         return isStudyGuide && matchesTest && isCompleted;
       });
       if (blankStudyGuide?.canvas_url || completedStudyGuide?.canvas_url) {
