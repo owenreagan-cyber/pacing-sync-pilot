@@ -396,7 +396,11 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       const spellingText = formatLessonText(spellingRow) || findSpellingFallbackText(spellingRow?.lesson_num || readingRow?.lesson_num);
       parts.push(`    <p><strong>Reading:</strong> ${readingText}</p>`);
       parts.push(`    <p><strong>Spelling:</strong> ${spellingText}</p>`);
-      if (isFriday) parts.push(`    <p><em>No homework over the weekend.</em></p>`);
+      if (isFriday && new Set(dayRows.map((r) => r.subject)).size > 1) {
+        parts.push(`    <p><em>No homework over the weekend &mdash; enjoy! &#127881;</em></p>`);
+      } else if (isFriday) {
+        parts.push(`    <p><em>No homework over the weekend.</em></p>`);
+      }
       parts.push(`  </div>`);
       continue;
     }
@@ -409,21 +413,27 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       if (!r.canvas_url) txt = `<span>${txt}</span>`;
       parts.push(`    <p>${txt}</p>`);
     }
+    if (isFriday && new Set(dayRows.map((r) => r.subject)).size > 1) {
+      parts.push(`    <p><em>No homework over the weekend &mdash; enjoy! &#127881;</em></p>`);
+    }
     parts.push(`    <p>&nbsp;</p>`);
 
     if (!isFriday) {
       const atHomeFragments: string[] = [];
+      const hasMultipleSubjectsAH = new Set(dayRows.map((r) => r.subject)).size > 1;
       for (const r of dayRows) {
         const raw = (r.at_home || '').trim();
         if (!raw) continue;
         let txt = stripLessonTitle(raw, r.subject);
         txt = injectFileLinks(txt, contentMap, r.subject);
-        if (r.canvas_url && r.subject === 'Math') {
+        const shouldLink = Boolean(r.canvas_url) && (r.subject === 'Math' || r.subject === 'Reading' || r.subject === 'Spelling');
+        const sPfx = hasMultipleSubjectsAH ? `<strong>${r.subject}:</strong> ` : '';
+        if (shouldLink) {
           atHomeFragments.push(
-            `    <p><a title="${txt}" href="${r.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
+            `    <p>${sPfx}<a title="${txt}" href="${r.canvas_url!}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url!.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
           );
         } else {
-          atHomeFragments.push(`    <p>${txt}</p>`);
+          atHomeFragments.push(`    <p>${sPfx}${txt}</p>`);
         }
       }
       if (atHomeFragments.length > 0) {
