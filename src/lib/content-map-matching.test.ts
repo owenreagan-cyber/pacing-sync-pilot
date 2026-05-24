@@ -59,4 +59,55 @@ describe('generateCanvasPageHtml resource grouping', () => {
     expect(html).toContain('Packet 1');
     expect(html).toContain('Packet 2');
   });
+
+  it('injects math study guide links into reminders when a test row exists', () => {
+    const mathStudyGuideMap: ContentMapEntry[] = [
+      {
+        subject: 'Math',
+        lesson_ref: 'Math_StudyGuide_23_Blank',
+        canonical_name: 'M_SG_23_Blank.pdf',
+        canvas_url: 'https://x/courses/1/files/M_SG_23_Blank.pdf',
+      },
+      {
+        subject: 'Math',
+        lesson_ref: 'Math_StudyGuide_23_Completed',
+        canonical_name: 'M_SG_23_Completed.pdf',
+        canvas_url: 'https://x/courses/1/files/M_SG_23_%20Completed%20.pdf',
+      },
+      {
+        subject: 'Math',
+        lesson_ref: 'Math_StudyGuide_24_Completed',
+        canonical_name: 'M_SG_24_Completed.pdf',
+        canvas_url: 'https://x/courses/1/files/M_SG_24_%20Completed%20.pdf',
+      },
+    ];
+
+    const html = generateCanvasPageHtml({
+      subject: 'Math',
+      rows: [{
+        day: 'Thursday',
+        type: 'Test',
+        lesson_num: '23',
+        in_class: 'Unit Test',
+        at_home: '',
+        canvas_url: null,
+        canvas_assignment_id: null,
+        object_id: null,
+        subject: 'Math',
+        resources: null,
+      }],
+      quarter: 'Q4',
+      weekNum: 5,
+      dateRange: '2026-01-01 – 2026-01-05',
+      subjectReminder: 'Bring calculator',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: mathStudyGuideMap,
+    });
+
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li><a href="https://x/courses/1/files/M_SG_23_Blank.pdf">M_SG_23_Blank.pdf</a> - Blank</li>');
+    expect(html).toContain('<li><a href="https://x/courses/1/files/M_SG_23_%20Completed%20.pdf">M_SG_23_Completed.pdf</a> - Answers</li>');
+    expect(html).not.toContain('M_SG_24_Completed.pdf</a> - Answers');
+  });
 });
