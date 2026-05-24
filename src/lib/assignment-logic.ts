@@ -39,7 +39,7 @@ export function generateAssignmentTitle(
     case 'Math':
       // Canonical 2025-2026 Math title formats:
       //   SM5: Lesson N Evens / Odds / Test / Fact Test / Study Guide / Investigation
-      if (type === 'Test') return `${prefix} Lesson ${num} Test`;
+      if (type === 'Test') return `${prefix} Written Test ${num}`;
       if (type === 'Fact Test') return `${prefix} Lesson ${num} Fact Test`;
       if (type === 'Study Guide') return `${prefix} Lesson ${num} Study Guide`;
       if (type === 'Investigation') return `${prefix} Lesson ${num} Investigation`;
@@ -51,16 +51,16 @@ export function generateAssignmentTitle(
 
     case 'Reading':
       if (type === 'Test') return `${prefix} Mastery Test ${num}`;
-      if (type === 'Checkout') return `${prefix} Reading Checkout ${num}`;
-      return `${prefix} Reading HW ${num}`;
+      if (type === 'Checkout') return `${prefix} Check Out ${num}`;
+      return `${prefix.replace(/:$/, '')} - Lesson ${num} Workbook and Comprehension Questions`;
 
     case 'Spelling':
       if (type === 'Test') return `${prefix} Spelling Test ${spellingTestNum(num)}`;
       return `${prefix} Spelling ${num}`;
 
     case 'Language Arts':
-      if (type === 'Test') return `${prefix} Shurley Test`;
-      if (type === 'CP' || type === 'Classroom Practice') return `${prefix} Shurley English Classroom Practice ${num}`;
+      if (type === 'Test') return `${prefix} 4A - Chapter ${num} Test`;
+      if (type === 'CP' || type === 'Classroom Practice') return `${prefix} 4A - Shurley English Classroom Practice ${num}`;
       return `${prefix} English ${num}`;
 
     default:
@@ -138,7 +138,7 @@ export function resolveAssignmentGroup(subject: string, type: string): Assignmen
       }
       if (type === 'Checkout') {
         return {
-          groupName: 'Check Out',
+          groupName: 'Check Outs',
           points: 100,
           gradingType: 'points',
           omitFromFinal: false,
