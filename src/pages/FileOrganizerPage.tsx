@@ -100,7 +100,6 @@ interface CanvasReadFilesResponse {
   }>;
 }
 
-const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const MAPPER_MAX_CONCURRENCY = 5;
 const EXECUTE_CHUNK_SIZE = 25;
 const MASS_ORG_CHUNK_SIZE = 5;
@@ -163,6 +162,8 @@ export default function FileOrganizerPage() {
   const [massOrganizing, setMassOrganizing] = useState(false);
   const [cleanupUntitled, setCleanupUntitled] = useState(false);
   const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
+  const [smartWorkflowRunning, setSmartWorkflowRunning] = useState(false);
+  const [smartWorkflowStep, setSmartWorkflowStep] = useState<string>('');
   const [globalSweepProgress, setGlobalSweepProgress] = useState<{
     current: number;
     total: number;
@@ -437,23 +438,21 @@ export default function FileOrganizerPage() {
       toast.error('No course IDs configured');
       return;
     }
-
-    const targetSubjects = new Set<string>(GLOBAL_MAPPER_SUBJECTS);
-    const selectedCourses = courseOptions.filter((opt) => targetSubjects.has(opt.label));
-    if (selectedCourses.length === 0) {
-      toast.error('No target subjects found in course IDs');
-      return;
-    }
+    const selectedCourses = courseOptions.filter((opt) => opt.value?.trim().length > 0);
 
     setMapperLoading(true);
     try {
       const rowsByCourse = await Promise.allSettled(
         selectedCourses.map(async (opt) => {
+          const parsedCourseId = Number.parseInt(opt.value, 10);
+          if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+            throw new Error(`${opt.label}: invalid course id "${opt.value}"`);
+          }
           const { data, error } = await supabase
             .from('canvas_orphan_files')
             .select('*')
             .eq('status', 'PENDING')
-            .eq('course_id', opt.value)
+            .eq('course_id', String(parsedCourseId))
             .order('created_at', { ascending: true });
           if (error) throw new Error(`${opt.label}: ${error.message}`);
           return (data ?? []) as OrphanFile[];
@@ -1093,24 +1092,37 @@ export default function FileOrganizerPage() {
         await sleep(0);
 
         try {
+          const parsedCourseId = Number.parseInt(courseId, 10);
+          if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+            throw new Error(`Invalid course ID: ${courseId}`);
+          }
           const { data, error } = await supabase.functions.invoke('canvas-read-files', {
-            body: { courseId: Number(courseId) },
+            body: { courseId: parsedCourseId },
           });
           if (error) throw error;
 
           const result = (data as CanvasReadFilesResponse | null)?.results?.find(
-            (entry) => String(entry.courseId ?? '') === String(courseId),
+            (entry) => String(entry.courseId ?? '') === String(parsedCourseId),
           );
           const courseFiles = result?.files ?? [];
           scanned += courseFiles.length;
 
           if (courseFiles.length > 0) {
+            const fileIds = courseFiles.map((file) => String(file.id));
+            const { data: existingRows, error: existingError } = await supabase
+              .from('canvas_orphan_files')
+              .select('canvas_file_id,status')
+              .in('canvas_file_id', fileIds);
+            if (existingError) throw existingError;
+            const statusById = new Map(
+              (existingRows ?? []).map((row) => [String(row.canvas_file_id), String(row.status ?? 'PENDING')]),
+            );
             const rows = courseFiles.map((file) => ({
               canvas_file_id: String(file.id),
-              course_id: String(courseId),
+              course_id: String(parsedCourseId),
               original_name: file.display_name ?? file.filename ?? null,
               canvas_url: file.url ?? null,
-              status: 'PENDING',
+              status: statusById.get(String(file.id)) ?? 'PENDING',
             }));
 
             const { error: upsertError } = await supabase
@@ -1152,6 +1164,30 @@ export default function FileOrganizerPage() {
       setGlobalSweepRunning(false);
     }
   }, [canvasCourseIds, courseLabelById, loadFiles, loadMapperRows, mapperCourseId]);
+
+  const handleRunSmartWorkflow = useCallback(async () => {
+    if (smartWorkflowRunning) return;
+    setSmartWorkflowRunning(true);
+    try {
+      setSmartWorkflowStep('Scanning all courses');
+      await handleScanAllCourses();
+
+      setSmartWorkflowStep('Mapping all pending files');
+      await mapAllCoursesSequentially();
+
+      setSmartWorkflowStep('Detecting duplicates');
+      await handleDetectDuplicates();
+
+      toast.success('Smart workflow complete', {
+        description: 'Scan, map, and duplicate detection finished.',
+      });
+    } catch (e: any) {
+      toast.error('Smart workflow failed', { description: e?.message ?? String(e) });
+    } finally {
+      setSmartWorkflowRunning(false);
+      setSmartWorkflowStep('');
+    }
+  }, [handleDetectDuplicates, handleScanAllCourses, mapAllCoursesSequentially, smartWorkflowRunning]);
 
   const duplicateCount = files.filter((f) => f.is_duplicate).length;
   const progressPct =
@@ -1540,7 +1576,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={loadMapperRows}
-                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting}
+                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperLoading ? (
@@ -1552,7 +1588,7 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   onClick={mapCourseSequentially}
-                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0}
+                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1565,7 +1601,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={mapAllCoursesSequentially}
-                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading}
+                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1579,7 +1615,7 @@ export default function FileOrganizerPage() {
                   variant="outline"
                   onClick={handleScanAllCourses}
                   disabled={
-                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning
                   }
                   className="gap-1.5"
                 >
@@ -1592,8 +1628,23 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   variant="default"
+                  onClick={handleRunSmartWorkflow}
+                  disabled={
+                    smartWorkflowRunning || globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                  }
+                  className="gap-1.5"
+                >
+                  {smartWorkflowRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {smartWorkflowRunning ? 'Running Smart Workflow…' : 'Run Smart Workflow'}
+                </Button>
+                <Button
+                  variant="default"
                   onClick={executeMapperBulk}
-                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0}
+                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperExecuting ? (
@@ -1606,7 +1657,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="secondary"
                   onClick={handleExecuteMassOrganization}
-                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0}
+                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0 || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {massOrganizing ? (
@@ -1621,7 +1672,7 @@ export default function FileOrganizerPage() {
                     id="mapper-dry-run"
                     checked={isDryRun}
                     onCheckedChange={setIsDryRun}
-                    disabled={mapperRunning || mapperExecuting || massOrganizing}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning}
                   />
                   <Label htmlFor="mapper-dry-run" className="text-xs whitespace-nowrap">
                     Enable Dry Run (Log Only)
@@ -1632,7 +1683,7 @@ export default function FileOrganizerPage() {
                     id="cleanup-untitled"
                     checked={cleanupUntitled}
                     onCheckedChange={setCleanupUntitled}
-                    disabled={mapperRunning || mapperExecuting || massOrganizing}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning}
                   />
                   <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
                     Auto-delete empty Untitled/Scan folders
@@ -1697,6 +1748,11 @@ export default function FileOrganizerPage() {
                       : ''}
                   </p>
                 </div>
+              )}
+              {smartWorkflowRunning && (
+                <p className="text-xs text-muted-foreground">
+                  Smart workflow step: {smartWorkflowStep || 'Preparing…'}
+                </p>
               )}
             </CardContent>
           </Card>
