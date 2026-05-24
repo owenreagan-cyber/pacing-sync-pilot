@@ -7,10 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Library, RefreshCw, Loader2, ExternalLink, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Library, RefreshCw, Loader2, ExternalLink, AlertTriangle, CheckCircle2, DatabaseZap, Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { callEdge } from '@/lib/edge';
+import { fetchAllCourseFiles, type CanvasFile } from '@/lib/canvas-api';
 
 interface ContentMapRow {
   id: string;
@@ -82,6 +83,11 @@ export default function ContentRegistryPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [bulkRenaming, setBulkRenaming] = useState(false);
 
+  // Snapshot Registry state
+  const [snapshotFiles, setSnapshotFiles] = useState<CanvasFile[]>([]);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [generatingMap, setGeneratingMap] = useState(false);
+
   async function loadAll() {
     const [{ data: cm }, { data: fs }, { data: pr }, { data: wk }, { data: log }] = await Promise.all([
       supabase.from('content_map').select('*').order('subject').order('lesson_ref'),
@@ -147,6 +153,46 @@ export default function ContentRegistryPage() {
     await loadAll();
   }
 
+  async function loadSnapshot() {
+    setSnapshotLoading(true);
+    try {
+      const files = await fetchAllCourseFiles();
+      setSnapshotFiles(files);
+      toast.success(`Loaded ${files.length} files from Canvas`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Snapshot failed');
+    } finally {
+      setSnapshotLoading(false);
+    }
+  }
+
+  async function generateMap() {
+    if (!snapshotFiles.length) {
+      toast.error('Load a snapshot first');
+      return;
+    }
+    setGeneratingMap(true);
+    try {
+      const records = snapshotFiles.map((f) => ({
+        canvas_file_id: String(f.id),
+        course_id: String(f.course_id ?? ''),
+        original_name: f.display_name || f.filename || null,
+        canvas_url: f.html_url || f.url || null,
+        status: 'SNAPSHOT',
+      }));
+      const { error } = await supabase
+        .from('canvas_orphan_files')
+        .upsert(records, { onConflict: 'canvas_file_id' });
+      if (error) throw new Error(error.message);
+      toast.success(`Map generated: ${records.length} files saved as Source of Truth`);
+      await loadAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Generate map failed');
+    } finally {
+      setGeneratingMap(false);
+    }
+  }
+
   // Derived
   const filteredMap = useMemo(
     () => subjectFilter === 'All' ? contentMap : contentMap.filter((r) => r.subject === subjectFilter),
@@ -154,6 +200,19 @@ export default function ContentRegistryPage() {
   );
 
   const renameQueue = useMemo(() => files.filter((f) => f.needs_rename && f.friendly_name), [files]);
+
+  // Snapshot: group files by subject → folder_name
+  const snapshotGrouped = useMemo(() => {
+    const groups: Record<string, Record<string, CanvasFile[]>> = {};
+    for (const f of snapshotFiles) {
+      const subj = f.subject ?? 'Unknown';
+      const folder = f.folder_name ?? 'course files';
+      if (!groups[subj]) groups[subj] = {};
+      if (!groups[subj][folder]) groups[subj][folder] = [];
+      groups[subj][folder].push(f);
+    }
+    return groups;
+  }, [snapshotFiles]);
 
   const weekById = useMemo(() => {
     const m = new Map<string, WeekRow>();
@@ -218,7 +277,7 @@ export default function ContentRegistryPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="sync">Sync</TabsTrigger>
           <TabsTrigger value="map">Content Map</TabsTrigger>
           <TabsTrigger value="missing">
@@ -227,6 +286,7 @@ export default function ContentRegistryPage() {
           <TabsTrigger value="rename">
             Rename Queue {renameQueue.length > 0 && <Badge variant="secondary" className="ml-2">{renameQueue.length}</Badge>}
           </TabsTrigger>
+          <TabsTrigger value="snapshot">Snapshot</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
         </TabsList>
 
@@ -449,6 +509,113 @@ export default function ContentRegistryPage() {
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* SNAPSHOT REGISTRY */}
+        <TabsContent value="snapshot" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5 text-primary" />
+                  Snapshot Registry
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {snapshotFiles.length > 0 && (
+                    <Badge variant="outline">{snapshotFiles.length} files</Badge>
+                  )}
+                  <Button
+                    variant="outline"
+                    onClick={loadSnapshot}
+                    disabled={snapshotLoading}
+                  >
+                    {snapshotLoading
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : <RefreshCw className="mr-2 h-4 w-4" />}
+                    {snapshotLoading ? 'Loading…' : 'Load Snapshot'}
+                  </Button>
+                  <Button
+                    onClick={generateMap}
+                    disabled={generatingMap || snapshotFiles.length === 0}
+                  >
+                    {generatingMap
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : <DatabaseZap className="mr-2 h-4 w-4" />}
+                    {generatingMap ? 'Saving…' : 'Generate Map'}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Live snapshot of all files across every Canvas course, grouped by subject and folder.
+                Use <strong>Generate Map</strong> to save this as the Source of Truth for renaming.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0">
+              {snapshotFiles.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  Click <strong>Load Snapshot</strong> to fetch all Canvas files.
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {Object.entries(snapshotGrouped).sort(([a], [b]) => a.localeCompare(b)).map(([subject, folders]) => (
+                    <div key={subject}>
+                      <div className="px-4 py-2 bg-muted/50 flex items-center gap-2">
+                        <Badge>{subject}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {Object.values(folders).reduce((n, arr) => n + arr.length, 0)} files
+                        </span>
+                      </div>
+                      {Object.entries(folders).sort(([a], [b]) => a.localeCompare(b)).map(([folder, folderFiles]) => (
+                        <div key={folder}>
+                          <div className="px-6 py-1 bg-muted/20 text-xs font-medium text-muted-foreground flex items-center gap-2">
+                            📁 {folder}
+                            <span className="font-normal">({folderFiles.length})</span>
+                          </div>
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="pl-8">File Name</TableHead>
+                                <TableHead>Type</TableHead>
+                                <TableHead>Updated</TableHead>
+                                <TableHead>Link</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {folderFiles.map((f) => (
+                                <TableRow key={f.id}>
+                                  <TableCell className="pl-8 text-xs font-mono max-w-xs truncate">
+                                    {f.display_name || f.filename}
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">
+                                    {f.content_type ?? '—'}
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">
+                                    {f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '—'}
+                                  </TableCell>
+                                  <TableCell>
+                                    {f.html_url ? (
+                                      <a
+                                        href={f.html_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-primary inline-flex items-center gap-1 text-xs"
+                                      >
+                                        Open <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
