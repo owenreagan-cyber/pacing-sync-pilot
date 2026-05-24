@@ -1031,14 +1031,22 @@ export function getWednesdayBefore(testDay: string): string {
   const test = new Date(now);
   test.setDate(now.getDate() + daysUntilTest);
 
+  // Find the Wednesday that is closest to 2 days before the test
+  // Thursday test (4) → Wed - 1 day before test
+  // Friday test (5) → Wed - 2 days before test
+  // Wednesday test (3) → Mon - 2 days before test (Mon is 2 days before Wed)
+  // Tuesday test (2) → Sun - 2 days before test (not ideal; use Monday)
+  // For all other days: go back to the most recent Monday (2 days before Wed) as fallback
   const wed = new Date(test);
-  if (targetDow === 4) {
-    wed.setDate(test.getDate() - 1);
-  } else if (targetDow === 5) {
-    wed.setDate(test.getDate() - 2);
+  if (targetDow === 4) { // Thursday
+    wed.setDate(test.getDate() - 1); // Wednesday
+  } else if (targetDow === 5) { // Friday
+    wed.setDate(test.getDate() - 2); // Wednesday
+  } else if (targetDow === 3) { // Wednesday
+    wed.setDate(test.getDate() - 2); // Monday (2 days before)
   } else {
-    const backToWednesday = (targetDow - 3 + 7) % 7;
-    wed.setDate(test.getDate() - backToWednesday);
+    // For other days, go 2 days before the test
+    wed.setDate(test.getDate() - 2);
   }
   return etDateAt(wed.getFullYear(), wed.getMonth(), wed.getDate(), 16);
 }

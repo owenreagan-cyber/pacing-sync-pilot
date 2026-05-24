@@ -31,7 +31,7 @@ async function generateBrief(rows: Array<Record<string, unknown>>): Promise<stri
       method: 'POST',
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-2.0-flash-001',
         messages: [
           { role: 'system', content: 'You are a warm assistant writing 2-3 encouraging sentences for a 4th-grade teacher about today\'s lessons. No fluff.' },
           { role: 'user', content: `Today's lessons:\n${lines}\n\nWrite a 2-3 sentence encouraging brief.` },
