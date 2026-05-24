@@ -60,6 +60,7 @@ interface OrphanFile {
   ai_snippet: string | null;
   ai_resource_type: string | null;
   ai_folder_chunked: boolean | null;
+  ai_confidence: number | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -76,6 +77,7 @@ interface MapperResult {
   snippet: string;
   suggestedName: string;
   suggestedFolder: string;
+  confidence?: number;
   alreadyFormatted?: boolean;
   fileHash?: string | null;
   isDuplicate?: boolean;
@@ -199,11 +201,14 @@ export default function FileOrganizerPage() {
       mapperRows.map((row) => {
         const currentPath = getCurrentPath(row);
         const proposedPath = getProposedPath(row);
+        const confidence = row.ai_confidence ?? null;
         return {
           fileId: row.canvas_file_id,
           currentPath,
           proposedPath,
           changed: currentPath !== proposedPath,
+          confidence,
+          needsReview: confidence !== null && confidence < 80,
         };
       }),
     [mapperRows],
@@ -1777,12 +1782,13 @@ export default function FileOrganizerPage() {
                     <TableRow>
                       <TableHead>Current Path</TableHead>
                       <TableHead>Proposed Path</TableHead>
+                      <TableHead className="w-[120px]">Confidence</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {strategyPreviewRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={2} className="text-center py-6 text-xs text-muted-foreground">
+                        <TableCell colSpan={3} className="text-center py-6 text-xs text-muted-foreground">
                           Load course files to preview strategy.
                         </TableCell>
                       </TableRow>
@@ -1796,6 +1802,21 @@ export default function FileOrganizerPage() {
                               {!row.changed && (
                                 <Badge variant="outline" className="text-[9px]">
                                   unchanged
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              {row.confidence !== null ? (
+                                <span className="text-xs tabular-nums">{row.confidence}%</span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                              {row.needsReview && (
+                                <Badge variant="destructive" className="text-[9px] gap-1">
+                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                  Needs Review
                                 </Badge>
                               )}
                             </div>

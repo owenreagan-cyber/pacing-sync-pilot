@@ -22,8 +22,12 @@ const classifyTool = {
         snippet: { type: "string", description: "First 300 chars summary/snippet from file content" },
         suggestedName: { type: "string" },
         suggestedFolder: { type: "string" },
+        confidence: {
+          type: "integer",
+          description: "Classification confidence score 0–100. Use 100 when certain, lower when ambiguous.",
+        },
       },
-      required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder"],
+      required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder", "confidence"],
       additionalProperties: false,
     },
   },
@@ -35,6 +39,7 @@ interface MapperResult {
   snippet: string;
   suggestedName: string;
   suggestedFolder: string;
+  confidence: number;
   alreadyFormatted?: boolean;
 }
 
@@ -139,8 +144,9 @@ const mapperResponseSchema = {
       snippet: { type: "string" },
       suggestedName: { type: "string" },
       suggestedFolder: { type: "string" },
+      confidence: { type: "integer" },
     },
-    required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder"],
+    required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder", "confidence"],
     additionalProperties: false,
   },
 } as const;
@@ -169,19 +175,26 @@ async function shouldChunkCourseLessons(
     .limit(1000);
 
   let maxLesson = 0;
+  let lessonFileCount = 0;
   for (const row of courseRows ?? []) {
     const source = `${row.original_name ?? ""} ${row.ai_suggested_name ?? ""} ${row.ai_lesson_ref ?? ""}`.trim();
     const lessonNum = parseLessonNumber(source);
-    if (lessonNum && lessonNum > maxLesson) {
-      maxLesson = lessonNum;
+    if (lessonNum) {
+      lessonFileCount += 1;
+      if (lessonNum > maxLesson) {
+        maxLesson = lessonNum;
+      }
     }
   }
 
   const currentLesson = parseLessonNumber(currentFileSource);
   if (currentLesson && currentLesson > maxLesson) {
     maxLesson = currentLesson;
+    lessonFileCount += 1;
   }
-  return maxLesson > 20;
+  // Apply Rule of 20: chunk if more than 20 lesson-type files exist in the course,
+  // or if the max lesson number itself exceeds 20.
+  return lessonFileCount > 20 || maxLesson > 20;
 }
 
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
@@ -227,6 +240,7 @@ function fallbackNeedsReview(displayName: string, fallbackId: string, snippetOve
     snippet: safeSnippet || "No readable text extracted from file content.",
     suggestedName: safeName,
     suggestedFolder: "Needs Visual Review",
+    confidence: 0,
   };
 }
 
@@ -243,12 +257,17 @@ function toValidatedMapperResult(value: unknown): MapperResult | null {
   ) {
     return null;
   }
+  const rawConfidence = candidate.confidence;
+  const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
+    ? Math.min(100, Math.max(0, Math.round(rawConfidence)))
+    : 50;
   return {
     resourceType: candidate.resourceType.trim(),
     purpose: candidate.purpose.map((item) => item.trim()).filter(Boolean),
     snippet: normalizeSnippetText(candidate.snippet),
     suggestedName: candidate.suggestedName.trim(),
     suggestedFolder: candidate.suggestedFolder.trim(),
+    confidence,
   };
 }
 
@@ -437,29 +456,46 @@ Deno.serve(async (req) => {
         snippet: normalizeSnippetText(String(orphan.ai_snippet ?? fileContentSnippet ?? displayName)),
         suggestedName: displayName,
         suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
+        confidence: 100,
         alreadyFormatted: true,
       };
     } else {
-      const prompt = `You are a strict academic librarian for Canvas.
+      const fileSnippet = normalizeSnippetText(fileContentSnippet).slice(0, SNIPPET_MAX_CHARS);
+      const prompt = `You are a strict academic librarian for Canvas LMS. Classify the educational file below.
+
+RULE OF 20 — FOLDER CHUNKING:
+If a course folder would contain more than 20 lesson files, you MUST split them into ten-lesson sub-folders:
+  "Lessons 1-10", "Lessons 11-20", "Lessons 21-30", etc.
+Apply this rule whenever the lesson number is known and the course likely has > 20 lessons.
+
+SUBJECT-SPECIFIC NAMING CONVENTIONS (apply strictly):
+- Math files:             suggestedName format → "[SM5]: Lesson N"   (e.g., "[SM5]: Lesson 14")
+- Reading/Spelling files: suggestedName format → "[RM4]: Lesson N"   (e.g., "[RM4]: Lesson 7")
+- ELA files:              suggestedName format → "[ELA4]: Chapter N" (e.g., "[ELA4]: Chapter 3")
+- Other subjects: use the clearest descriptive title without subject codes.
 
 STRICT FOLDER RULES:
-1. If the course has more than 20 lessons, group lesson files into ten-lesson folders ("Lessons 1-10", "Lessons 11-20", etc.).
+1. Apply Rule of 20 chunking ("Lessons 1-10", "Lessons 11-20", …) whenever lesson count > 20.
 2. ALWAYS place Investigations in "Investigations".
 3. ALWAYS place Tests/Assessments in "Assessments".
-4. If a file is a generic "Lesson", route it to the most specific "Lessons X-Y" folder possible.
-5. IF the AI is unsure, use "Resources" as the absolute fallback.
+4. ALWAYS place Reteaching materials in "Reteaching".
+5. ALWAYS place Power Ups in "Power Ups".
+6. If unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
-- Friendly Name: remove version numbers, dates, and vendor/noise strings (example: "v2_final", "scan_export", "vendor").
-- snippet must use fileContentSnippet (<=300 chars).
-- purpose must be an array of concise category tags.
+- suggestedName: remove version numbers, dates, and vendor noise (e.g., "v2_final", "scan_export").
+- snippet: copy the file_snippet verbatim (≤300 chars).
+- purpose: array of concise category tags.
+- confidence: integer 0–100 reflecting how certain you are about the classification.
+  Use 90–100 when the subject code, lesson number and folder are all unambiguous.
+  Use 50–89 when some context is inferred.
+  Use 0–49 when the file is very ambiguous or unreadable.
 
 FILE CONTEXT:
-Original name: "${orphan.original_name ?? ""}".
-Snippet: "${fileContentSnippet}".
+original_name: "${orphan.original_name ?? ""}"
+file_snippet: "${fileSnippet}"
 
-Output MUST be a valid JSON object matching the schema.
-Use the classify_mapper_file tool.`;
+Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
 
       const response = await fetch(AI_URL, {
         method: "POST",
@@ -563,6 +599,7 @@ Use the classify_mapper_file tool.`;
         ai_suggested_name: mapped.suggestedName,
         ai_suggested_folder: mapped.suggestedFolder,
         ai_folder_chunked: aiFolderChunked,
+        ai_confidence: mapped.confidence,
         file_hash: fileHash,
         is_duplicate: duplicateMatch.isDuplicate,
         canonical_file_id: duplicateMatch.canonicalFileId,
