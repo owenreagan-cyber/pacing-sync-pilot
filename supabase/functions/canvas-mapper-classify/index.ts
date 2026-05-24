@@ -439,12 +439,6 @@ Deno.serve(async (req) => {
         suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
         alreadyFormatted: true,
       };
-    } else if (!fileContentSnippet) {
-      mapped = fallbackNeedsReview(
-        displayName || orphan.original_name || "",
-        orphan.canvas_file_id,
-        "No readable text extracted from file content.",
-      );
     } else {
       const prompt = `You are a strict academic librarian for Canvas.
 

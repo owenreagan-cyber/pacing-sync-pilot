@@ -16,9 +16,26 @@ Deno.serve(async (req) => {
     );
     const body = await req.json().catch(() => ({}));
     const map = await getCourseIds();
-    const courseIds: number[] = body.courseId
-      ? [Number(body.courseId)]
-      : Array.from(new Set(Object.values(map)));
+    const requestedCourseId = body?.courseId;
+    let courseIds: number[] = [];
+    if (requestedCourseId !== undefined && requestedCourseId !== null && String(requestedCourseId).trim() !== "") {
+      const parsed = Number(requestedCourseId);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return new Response(JSON.stringify({ ok: false, error: `Invalid courseId: ${requestedCourseId}` }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      courseIds = [Math.trunc(parsed)];
+    } else {
+      courseIds = Array.from(
+        new Set(
+          Object.values(map)
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+        ),
+      );
+    }
 
     let total = 0;
     const errors: string[] = [];
