@@ -240,6 +240,19 @@ export default function AnnouncementCenterPage() {
         const sNum = parseInt(spellingTest?.lesson_num || '0', 10) || 0;
         const _dateStr = readingTest?.day || spellingTest?.day || 'this week';
         const rFluency = getReadingFluencyTarget(rNum);
+        let answerKeyUrl: string | undefined = readingTest?.object_id?.startsWith('http')
+          ? readingTest.object_id
+          : undefined;
+        if (!answerKeyUrl && rNum) {
+          // Look for a completed/answer study guide in content_map
+          const { data: sgEntry } = await supabase
+            .from('content_map')
+            .select('canvas_url')
+            .eq('subject', 'Reading')
+            .or(`canonical_name.ilike.%Mastery%${rNum}%Completed%,canonical_name.ilike.%Test%${rNum}%Answer%,canonical_name.ilike.%Review%${rNum}%KEY%`)
+            .maybeSingle();
+          if (sgEntry?.canvas_url) answerKeyUrl = sgEntry.canvas_url;
+        }
 
         drafts.push({
           week_id: selectedWeekId,
@@ -258,7 +271,7 @@ export default function AnnouncementCenterPage() {
                   fluencyGoalWpm: rFluency.wpm,
                   fluencyMaxErrors: rFluency.maxErrors,
                   blankStudyGuideUrl: readingTest.canvas_url || undefined,
-                  answerKeyUrl: readingTest.object_id?.startsWith('http') ? readingTest.object_id : undefined,
+                  answerKeyUrl,
                 }
               : undefined,
             spelling: sNum
