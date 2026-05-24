@@ -396,6 +396,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       const spellingText = formatLessonText(spellingRow) || findSpellingFallbackText(spellingRow?.lesson_num || readingRow?.lesson_num);
       parts.push(`    <p><strong>Reading:</strong> ${readingText}</p>`);
       parts.push(`    <p><strong>Spelling:</strong> ${spellingText}</p>`);
+      if (isFriday) parts.push(`    <p><em>No homework over the weekend.</em></p>`);
       parts.push(`  </div>`);
       continue;
     }
