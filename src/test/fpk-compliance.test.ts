@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { generateCanvasPageHtml, type CanvasPageRow } from '@/lib/canvas-html';
 import { validateFpkPage } from '@/lib/validators/fpk-validator';
 import { generateAssignmentTitle } from '@/lib/assignment-logic';
+import { getReadingFluencyTarget } from '@/lib/announcement-templates';
 
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
@@ -163,5 +164,50 @@ describe('FPK compliance', () => {
     expect(html).toContain('<strong>Homework</strong>');
     expect(html).not.toContain('<p><strong>Reading:</strong>');
     expect(html).not.toContain('<p><strong>Spelling:</strong>');
+  });
+
+  describe('Reading + Spelling combined page', () => {
+    it('adds Reading and Spelling labels in the in-class content when both subjects are present on the same day', () => {
+      const html = generateCanvasPageHtml({
+        subject: 'Reading & Spelling',
+        rows: [
+          { day: 'Monday', type: null, lesson_num: '11', in_class: 'Reading Lesson 11', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+          { day: 'Monday', type: null, lesson_num: '11', in_class: 'Spelling Lesson 11', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Spelling', resources: null },
+        ],
+        quarter: 'Q1',
+        weekNum: 1,
+        dateRange: 'Sept 1-5',
+        subjectReminder: '',
+        subjectResources: [],
+        quarterColor: '#0065a7',
+      });
+
+      expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 11</p>');
+      expect(html).toContain('<p><strong>Spelling:</strong> Spelling Lesson 11</p>');
+    });
+
+    it('adds a friendly weekend homework message for Friday combined pages', () => {
+      const html = generateCanvasPageHtml({
+        subject: 'Reading & Spelling',
+        rows: [
+          { day: 'Friday', type: null, lesson_num: '12', in_class: 'Reading Lesson 12', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+          { day: 'Friday', type: null, lesson_num: '12', in_class: 'Spelling Lesson 12', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Spelling', resources: null },
+        ],
+        quarter: 'Q1',
+        weekNum: 1,
+        dateRange: 'Sept 1-5',
+        subjectReminder: '',
+        subjectResources: [],
+        quarterColor: '#0065a7',
+      });
+
+      expect(html).toContain('No homework over the weekend');
+    });
+
+    it('returns 130 wpm fluency target for reading tests 11 and higher', () => {
+      expect(getReadingFluencyTarget(11).wpm).toBe(130);
+      expect(getReadingFluencyTarget(18).wpm).toBe(130);
+      expect(getReadingFluencyTarget('14').wpm).toBe(130);
+    });
   });
 });
