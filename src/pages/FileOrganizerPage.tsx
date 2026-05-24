@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -77,12 +77,25 @@ interface MapperResult {
   suggestedName: string;
   suggestedFolder: string;
   alreadyFormatted?: boolean;
+  fileHash?: string | null;
+  isDuplicate?: boolean;
+  canonicalFileId?: string | null;
 }
 
 const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const MAPPER_MAX_CONCURRENCY = 5;
 const EXECUTE_CHUNK_SIZE = 25;
 const PAUSE_POLL_MS = 150;
+
+function getCurrentPath(row: OrphanFile): string {
+  return (row.original_name ?? row.canvas_file_id).trim();
+}
+
+function getProposedPath(row: OrphanFile): string {
+  const proposedName = row.ai_suggested_name?.trim() || row.original_name?.trim() || row.canvas_file_id;
+  const proposedFolder = row.ai_suggested_folder?.trim();
+  return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -149,6 +162,20 @@ export default function FileOrganizerPage() {
     virtualMapperRows.length > 0
       ? mapperRowVirtualizer.getTotalSize() - virtualMapperRows[virtualMapperRows.length - 1].end
       : 0;
+  const strategyPreviewRows = useMemo(
+    () =>
+      mapperRows.map((row) => {
+        const currentPath = getCurrentPath(row);
+        const proposedPath = getProposedPath(row);
+        return {
+          fileId: row.canvas_file_id,
+          currentPath,
+          proposedPath,
+          changed: currentPath !== proposedPath,
+        };
+      }),
+    [mapperRows],
+  );
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -290,6 +317,9 @@ export default function FileOrganizerPage() {
           ai_purpose: mappedRow.purpose,
           ai_snippet: mappedRow.snippet,
           ai_folder_chunked: !!mappedRow.suggestedFolder.match(/\d+\s*-\s*\d+/),
+          file_hash: mappedRow.fileHash ?? null,
+          is_duplicate: mappedRow.isDuplicate ?? false,
+          canonical_file_id: mappedRow.canonicalFileId ?? null,
         });
         mapped += 1;
       };
@@ -1293,6 +1323,58 @@ export default function FileOrganizerPage() {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Strategy Preview</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Review Current Path vs Proposed Path before writing any moves to Canvas.
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {strategyPreviewRows.filter((row) => row.changed).length} change
+                  {strategyPreviewRows.filter((row) => row.changed).length !== 1 ? 's' : ''}
+                </Badge>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Current Path</TableHead>
+                      <TableHead>Proposed Path</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {strategyPreviewRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-center py-6 text-xs text-muted-foreground">
+                          Load course files to preview strategy.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      strategyPreviewRows.map((row) => (
+                        <TableRow key={`preview-${row.fileId}`}>
+                          <TableCell className="font-mono text-xs break-all">{row.currentPath}</TableCell>
+                          <TableCell className="font-mono text-xs break-all">
+                            <div className="flex items-center gap-2">
+                              <span>{row.proposedPath}</span>
+                              {!row.changed && (
+                                <Badge variant="outline" className="text-[9px]">
+                                  unchanged
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
