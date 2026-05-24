@@ -271,31 +271,30 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
   }
   if (subject === 'Math') {
     const testRow = rows.find((row) =>
-      row.subject === 'Math'
-      && (row.type || '').toLowerCase().includes('test')
+      (row.type || '').toLowerCase().includes('test')
       && row.lesson_num,
     );
     const testNum = Number.parseInt((testRow?.lesson_num || '').trim(), 10);
     if (Number.isFinite(testNum)) {
       const pad2 = String(testNum).padStart(2, '0');
-      const baseRef = `math_studyguide_${pad2}`;
       const blankStudyGuide = contentMap.find((entry) => {
-        const ref = (entry.lesson_ref || '').toLowerCase();
-        const name = (entry.canonical_name || '').toLowerCase();
-        return entry.subject === 'Math'
-          && !!entry.canvas_url
-          && (ref.includes(`${baseRef}_blank`) || (ref.includes(baseRef) && name.includes('blank')));
+        const url = entry.canvas_url || '';
+        if (!url || entry.subject !== 'Math') return false;
+        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
+        const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
+        const matchesTest = matchesLessonNumber(summary, String(testNum));
+        const hasCompletedMarker = /%[^%]*completed[^%]*%/i.test(url);
+        const isBlank = summary.includes('blank') || !hasCompletedMarker;
+        return isStudyGuide && matchesTest && isBlank;
       });
       const completedStudyGuide = contentMap.find((entry) => {
-        const ref = (entry.lesson_ref || '').toLowerCase();
-        const url = (entry.canvas_url || '').toLowerCase();
-        return entry.subject === 'Math'
-          && !!entry.canvas_url
-          && (
-            ref.includes(`${baseRef}_completed`)
-            || (url.includes(baseRef) && url.includes('completed'))
-            || url.includes('%completed%')
-          );
+        const url = entry.canvas_url || '';
+        if (!url || entry.subject !== 'Math') return false;
+        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
+        const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
+        const matchesTest = matchesLessonNumber(summary, String(testNum));
+        const isCompleted = /%[^%]*completed[^%]*%/i.test(url);
+        return isStudyGuide && matchesTest && isCompleted;
       });
       if (blankStudyGuide?.canvas_url || completedStudyGuide?.canvas_url) {
         parts.push('    <ul>');
