@@ -200,7 +200,7 @@ export default function SafetyDiffModal({
                       </button>
                       {isOpen && hasItems && (
                         <div className="border-t border-border/50 px-3 py-2 space-y-0.5 max-h-32 overflow-auto">
-                          {check.items!.map((item, i) => (
+                          {check.items.map((item, i) => (
                             <div
                               key={i}
                               className="text-[11px] font-mono text-muted-foreground"

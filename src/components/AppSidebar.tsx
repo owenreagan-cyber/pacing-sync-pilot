@@ -29,10 +29,6 @@ import {
   SidebarHeader,
   SidebarFooter,
   useSidebar,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
-  SidebarMenuItem as SidebarMenuItemComponent,
 } from '@/components/ui/sidebar';
 import { Badge } from '@/components/ui/badge';
 import { useState } from 'react';

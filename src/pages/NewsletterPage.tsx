@@ -35,9 +35,9 @@ interface Newsletter {
 const DEFAULT_FOOTER = 'Thales Academy Grade 4A — Mr. Reagan';
 
 export default function NewsletterPage() {
-  const config = useConfig();
+  const _config = useConfig();
   const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [_loading, _setLoading] = useState(false);
 
   // Editor state
   const [pastedText, setPastedText] = useState('');
@@ -60,14 +60,14 @@ export default function NewsletterPage() {
   const [footerLine, setFooterLine] = useState<string>(DEFAULT_FOOTER);
 
   useEffect(() => {
-    loadNewsletters();
+    void loadNewsletters();
   }, []);
 
   const loadNewsletters = async () => {
     const { data } = await supabase.from('newsletters').select('*').order('created_at', { ascending: false }).limit(20);
     if (data) setNewsletters(data.map((n: any) => ({
       ...n,
-      extra_sections: (n.extra_sections as any) || [],
+      extra_sections: (n.extra_sections) || [],
       points_of_contact: Array.isArray(n.points_of_contact) ? n.points_of_contact : [],
       quick_links: Array.isArray(n.quick_links) ? n.quick_links : [],
     })) as Newsletter[]);
@@ -164,7 +164,7 @@ export default function NewsletterPage() {
       if (data) setActiveNewsletterId(data.id);
       toast.success('Newsletter saved');
     }
-    loadNewsletters();
+    void loadNewsletters();
   };
 
   const handlePost = async () => {
@@ -199,7 +199,7 @@ export default function NewsletterPage() {
       toast.success('Newsletter queued', {
         description: 'It will deploy to Canvas Homeroom on Friday at 4 PM ET.',
       });
-      loadNewsletters();
+      void loadNewsletters();
     } catch (e: any) {
       toast.error('Queue failed', { description: e.message });
     }
@@ -469,7 +469,7 @@ export default function NewsletterPage() {
                     <Code className="h-3 w-3" /> HTML
                   </Button>
                   {previewMode === 'code' && (
-                    <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(htmlContent); toast.success('Copied!'); }} className="gap-1 ml-auto">
+                    <Button size="sm" variant="outline" onClick={() => { void navigator.clipboard.writeText(htmlContent); toast.success('Copied!'); }} className="gap-1 ml-auto">
                       <Copy className="h-3 w-3" /> Copy
                     </Button>
                   )}

@@ -1,4 +1,4 @@
-/* eslint-disable */
+ 
 import FileOrganizerPage from '@/pages/FileOrganizerPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 

@@ -109,7 +109,7 @@ function parseSheet(rows: string[][]): ParsedWeek[] {
     current.cells[subject] = current.cells[subject] || {};
     DAYS.forEach((day, i) => {
       const val = (row[2 + i] ?? '').trim();
-      current!.cells[subject][day] = val;
+      current.cells[subject][day] = val;
     });
     current.rowCount += 1;
   }

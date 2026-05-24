@@ -21,7 +21,7 @@ import { evaluateWeekRisk } from '@/lib/risk-engine';
 import { cn } from '@/lib/utils';
 import type { ContentMapEntry } from '@/lib/auto-link';
 import { loadSchoolCalendar, getWeekEvents, type CalendarEvent } from '@/lib/school-calendar';
-import { getPacingWeekDateRange, getPacingWeekDatesISO } from '@/lib/pacing-week';
+import { getPacingWeekDatesISO } from '@/lib/pacing-week';
 import { POWER_UP_MAP } from '@/lib/power-up-map';
 
 const SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
@@ -193,7 +193,7 @@ function buildResourceRefs(subject: string, d: DayData): string[] {
 }
 
 
-function buildAutoReminders(weekData: WeekData): string {
+function _buildAutoReminders(weekData: WeekData): string {
   const lines: string[] = [];
   const DAYS_LOCAL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
   const DAY_ABBR: Record<string, string> = {
@@ -275,9 +275,9 @@ export default function PacingEntryPage({
   const [subjectResources, setSubjectResources] = useState<
     Record<string, Array<{ label: string; url?: string; group?: string }>>
   >({});
-  const [activeResourceSubject, setActiveResourceSubject] = useState<string>('Math');
-  const SUBJECT_REMINDER_TABS = ['Math', 'Reading', 'Language Arts', 'History', 'Science'] as const;
-  const [activeReminderSubject, setActiveReminderSubject] = useState<string>('Math');
+  const [_activeResourceSubject, setActiveResourceSubject] = useState<string>('Math');
+  const _SUBJECT_REMINDER_TABS = ['Math', 'Reading', 'Language Arts', 'History', 'Science'] as const;
+  const [_activeReminderSubject, setActiveReminderSubject] = useState<string>('Math');
   const [wizardSubject, setWizardSubject] = useState<typeof SUBJECTS[number]>('Math');
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);

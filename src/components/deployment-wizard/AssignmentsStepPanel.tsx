@@ -1,4 +1,4 @@
-/* eslint-disable */
+ 
 import AssignmentsPage from '@/pages/AssignmentsPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 

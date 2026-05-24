@@ -43,7 +43,7 @@ export async function resolve(
       if (data && Number(data.confidence ?? 0) >= CONFIDENCE_THRESHOLD) {
         const value = data.value as Record<string, unknown> | null;
         const field = options.field ?? defaultFieldFor(category);
-        const raw = value && typeof value[field] === 'string' ? (value[field] as string) : null;
+        const raw = value && typeof value[field] === 'string' ? (value[field]) : null;
         if (raw) {
           // Bump usage_count + last_used (fire and forget)
           supabase

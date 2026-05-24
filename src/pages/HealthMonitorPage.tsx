@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,8 +63,8 @@ export default function HealthMonitorPage() {
     setLoading(false);
   };
 
-  useEffect(() => { loadLogs(); }, [filter]);
-  useEffect(() => { handleRunDiagnostics(); }, []);
+  useEffect(() => { void loadLogs(); }, [filter]);
+  useEffect(() => { void handleRunDiagnostics(); }, []);
 
   // Realtime subscription with connection status
   useEffect(() => {
@@ -89,7 +89,7 @@ export default function HealthMonitorPage() {
       .subscribe((status) => {
         setConnected(status === 'SUBSCRIBED');
       });
-    return () => { supabase.removeChannel(channel); };
+    return () => { void supabase.removeChannel(channel); };
   }, []);
 
   const statusIcon = (status: string | null) => {
