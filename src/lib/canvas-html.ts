@@ -269,6 +269,46 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       parts.push(`    <p>${line}</p>`);
     }
   }
+  if (subject === 'Math') {
+    const testRow = rows.find((row) =>
+      row.subject === 'Math'
+      && (row.type || '').toLowerCase().includes('test')
+      && row.lesson_num,
+    );
+    const testNum = Number.parseInt((testRow?.lesson_num || '').trim(), 10);
+    if (Number.isFinite(testNum)) {
+      const pad2 = String(testNum).padStart(2, '0');
+      const baseRef = `math_studyguide_${pad2}`;
+      const blankStudyGuide = contentMap.find((entry) => {
+        const ref = (entry.lesson_ref || '').toLowerCase();
+        const name = (entry.canonical_name || '').toLowerCase();
+        return entry.subject === 'Math'
+          && !!entry.canvas_url
+          && (ref.includes(`${baseRef}_blank`) || (ref.includes(baseRef) && name.includes('blank')));
+      });
+      const completedStudyGuide = contentMap.find((entry) => {
+        const ref = (entry.lesson_ref || '').toLowerCase();
+        const url = (entry.canvas_url || '').toLowerCase();
+        return entry.subject === 'Math'
+          && !!entry.canvas_url
+          && (
+            ref.includes(`${baseRef}_completed`)
+            || (url.includes(baseRef) && url.includes('completed'))
+            || url.includes('%completed%')
+          );
+      });
+      if (blankStudyGuide?.canvas_url || completedStudyGuide?.canvas_url) {
+        parts.push('    <ul>');
+        if (blankStudyGuide?.canvas_url) {
+          parts.push(`      <li><a href="${blankStudyGuide.canvas_url}">M_SG_${pad2}_Blank.pdf</a> - Blank</li>`);
+        }
+        if (completedStudyGuide?.canvas_url) {
+          parts.push(`      <li><a href="${completedStudyGuide.canvas_url}">M_SG_${pad2}_Completed.pdf</a> - Answers</li>`);
+        }
+        parts.push('    </ul>');
+      }
+    }
+  }
   parts.push(`  </div>`);
 
   const mergedResources: Resource[] = [...subjectResources];

@@ -1088,13 +1088,18 @@ export function getWednesdayBefore(testDay: string): string {
   const targetDow = DAY_INDEX[testDay] ?? 5;
   const now = new Date();
   const today = now.getDay();
-  // Find next occurrence of test day
   const daysUntilTest = (targetDow - today + 7) % 7 || 7;
   const test = new Date(now);
   test.setDate(now.getDate() + daysUntilTest);
-  // Walk back to Wednesday before that test
-  const back = (test.getDay() - 3 + 7) % 7 || 7;
+
   const wed = new Date(test);
-  wed.setDate(test.getDate() - back);
+  if (targetDow === 4) {
+    wed.setDate(test.getDate() - 1);
+  } else if (targetDow === 5) {
+    wed.setDate(test.getDate() - 2);
+  } else {
+    const backToWednesday = (targetDow - 3 + 7) % 7;
+    wed.setDate(test.getDate() - backToWednesday);
+  }
   return etDateAt(wed.getFullYear(), wed.getMonth(), wed.getDate(), 16);
 }
