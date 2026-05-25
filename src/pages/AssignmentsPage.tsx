@@ -49,10 +49,7 @@ const FILTER_CHIPS = ['All', 'Math', 'Reading', 'Language Arts', 'Spelling'];
 type DeployStatus = 'NEW' | 'UPDATE' | 'NO_CHANGE' | 'SKIP' | 'ERROR' | 'DEPLOYED';
 
 interface PreviewRow extends BuiltAssignment {
-  dayIndex: number;
-  rowKey: string;
   status: DeployStatus;
-  isSynthetic?: boolean;
 }
 
 interface PacingDbRow {
