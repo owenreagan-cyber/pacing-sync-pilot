@@ -118,6 +118,16 @@ function getProposedPath(row: OrphanFile): string {
   return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
 }
 
+function getCurrentPath(row: OrphanFile): string {
+  return (row.original_name ?? row.canvas_file_id).trim();
+}
+
+function getProposedPath(row: OrphanFile): string {
+  const proposedName = row.ai_suggested_name?.trim() || row.original_name?.trim() || row.canvas_file_id;
+  const proposedFolder = row.ai_suggested_folder?.trim();
+  return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2176,6 +2186,58 @@ export default function FileOrganizerPage() {
                                 <Badge variant="destructive" className="text-[9px] gap-1">
                                   <AlertTriangle className="h-2.5 w-2.5" />
                                   Needs Review
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Strategy Preview</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Review Current Path vs Proposed Path before writing any moves to Canvas.
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {strategyPreviewRows.filter((row) => row.changed).length} change
+                  {strategyPreviewRows.filter((row) => row.changed).length !== 1 ? 's' : ''}
+                </Badge>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Current Path</TableHead>
+                      <TableHead>Proposed Path</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {strategyPreviewRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-center py-6 text-xs text-muted-foreground">
+                          Load course files to preview strategy.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      strategyPreviewRows.map((row) => (
+                        <TableRow key={`preview-${row.fileId}`}>
+                          <TableCell className="font-mono text-xs break-all">{row.currentPath}</TableCell>
+                          <TableCell className="font-mono text-xs break-all">
+                            <div className="flex items-center gap-2">
+                              <span>{row.proposedPath}</span>
+                              {!row.changed && (
+                                <Badge variant="outline" className="text-[9px]">
+                                  unchanged
                                 </Badge>
                               )}
                             </div>
