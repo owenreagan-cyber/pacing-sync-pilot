@@ -649,6 +649,14 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
       };
     }
 
+    if (duplicateMatch.isDuplicate) {
+      mapped = {
+        ...mapped,
+        purpose: Array.from(new Set([...(mapped.purpose ?? []), "DUPLICATE"])),
+        suggestedFolder: "DUPLICATE",
+      };
+    }
+
     const aiFolderChunked = /\d+\s*-\s*\d+/.test(mapped.suggestedFolder);
 
     await supabase
