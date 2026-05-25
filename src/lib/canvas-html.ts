@@ -400,14 +400,45 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 
   const parts: string[] = [];
 
+  const resolveAssignmentUrl = (row: CanvasPageRow | undefined): string | null => {
+    if (!row) return null;
+    if (row.canvas_url) return row.canvas_url;
+    const assignmentId = (row.canvas_assignment_id || '').trim();
+    if (!assignmentId) return null;
+    const courseId = getCourseId(row.subject);
+    if (!courseId) return null;
+    return `https://thalesacademy.instructure.com/courses/${courseId}/assignments/${assignmentId}`;
+  };
+
+  const buildHomeworkLinkText = (row: CanvasPageRow | undefined, fallbackText: string): string => {
+    if (!row) return fallbackText;
+    const lessonNum = Number.parseInt((row.lesson_num || '').trim(), 10);
+    if (!Number.isFinite(lessonNum)) return fallbackText;
+    const rowType = (row.type || '').toLowerCase();
+
+    if (row.subject === 'Math' && !rowType.includes('test')) {
+      const parity = lessonNum % 2 === 0 ? 'Evens' : 'Odds';
+      return `SM 5 Lesson ${lessonNum} ${parity}`;
+    }
+
+    if (row.subject === 'Reading') {
+      if (rowType.includes('checkout')) return `RM 4 Check Out ${lessonNum}`;
+      if (rowType.includes('test')) return `RM 4 Mastery Test ${lessonNum}`;
+      return `RM 4 Lesson ${lessonNum} Workbook and Comprehension Questions`;
+    }
+
+    return fallbackText;
+  };
+
   const formatLessonText = (row: CanvasPageRow | undefined): string => {
     if (!row) return '';
     const raw = (row.in_class || '').trim();
     if (!raw) return '';
     let txt = stripLessonTitle(raw, row.subject);
     txt = injectFileLinks(txt, contentMap, row.subject);
-    if (row.canvas_url) {
-      return `<a title="${txt}" href="${row.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${row.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
+    const assignmentUrl = resolveAssignmentUrl(row);
+    if (assignmentUrl) {
+      return `<a title="${txt}" href="${assignmentUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${assignmentUrl.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a>`;
     }
     return txt;
   };
@@ -708,8 +739,10 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         parts.push(`    <h4 ${KL_H4}><strong>At Home</strong></h4>`);
         if (companionHomework) parts.push(`    <p><strong>${companionLine?.label || 'Spelling'}:</strong> ${companionHomework}</p>`);
         if (readingHomework) {
-          const readingHomeworkHtml = readingRow?.canvas_url
-            ? `<a title="${readingHomework}" href="${readingRow.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${readingRow.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${readingHomework}</a>`
+          const readingAssignmentUrl = resolveAssignmentUrl(readingRow);
+          const readingLinkText = buildHomeworkLinkText(readingRow, readingHomework);
+          const readingHomeworkHtml = readingAssignmentUrl
+            ? `<a title="${readingLinkText}" href="${readingAssignmentUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${readingAssignmentUrl.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${readingLinkText}</a>`
             : readingHomework;
           parts.push(`    <p><strong>Reading:</strong> ${readingHomeworkHtml}</p>`);
         }
@@ -752,12 +785,13 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         if (!raw && !fallback) continue;
         let txt = raw ? stripLessonTitle(raw, r.subject) : fallback;
         txt = injectFileLinks(txt, contentMap, r.subject);
-        const shouldLink = Boolean(r.canvas_url) && (r.subject === 'Math' || r.subject === 'Reading' || r.subject === 'Spelling');
+        const assignmentUrl = resolveAssignmentUrl(r);
+        const shouldLink = Boolean(assignmentUrl) && (r.subject === 'Math' || r.subject === 'Reading' || r.subject === 'Spelling');
         const sPfx = hasMultipleSubjectsAH ? `<strong>${r.subject}:</strong> ` : '';
         if (shouldLink) {
-          const canvasUrl = r.canvas_url || '';
+          const linkText = buildHomeworkLinkText(r, txt);
           atHomeFragments.push(
-            `    <p>${sPfx}<a title="${txt}" href="${canvasUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${canvasUrl.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
+            `    <p>${sPfx}<a title="${linkText}" href="${assignmentUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${assignmentUrl.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${linkText}</a></p>`
           );
         } else {
           atHomeFragments.push(`    <p>${sPfx}${txt}</p>`);

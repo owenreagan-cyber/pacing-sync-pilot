@@ -79,7 +79,7 @@ describe('shouldExcludeResource', () => {
     expect(html).not.toContain('Reading Glossary: Book A.pdf');
   });
 
-  it('renders Math homework fallback as a clickable Lesson Odds assignment link', () => {
+  it('renders Math homework fallback as a clickable canonical assignment link', () => {
     const html = generateCanvasPageHtml({
       subject: 'Math',
       rows: [
@@ -106,6 +106,36 @@ describe('shouldExcludeResource', () => {
     });
 
     expect(html).toContain('<h4 class="kl_solid_border" style="color: #ffffff; background-color: #333333; padding-left: 40px; border-width: 0px; width: 60%;"><strong>Homework</strong></h4>');
-    expect(html).toContain('title="Lesson 117 Odds" href="https://x/courses/1/assignments/117"');
+    expect(html).toContain('title="SM 5 Lesson 117 Odds" href="https://x/courses/1/assignments/117"');
+  });
+
+  it('builds assignment links from canvas_assignment_id when canvas_url is missing', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading & Spelling',
+      rows: [
+        {
+          day: 'Monday',
+          type: 'Lesson',
+          lesson_num: '117',
+          in_class: 'Reading Lesson 117',
+          at_home: '',
+          canvas_url: null,
+          canvas_assignment_id: '9117',
+          object_id: null,
+          subject: 'Reading',
+          resources: null,
+        },
+      ],
+      quarter: 'Q4',
+      weekNum: 7,
+      dateRange: '2026-04-01 – 2026-04-05',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: [],
+    });
+
+    expect(html).toContain('href="https://thalesacademy.instructure.com/courses/21919/assignments/9117"');
+    expect(html).toContain('>RM 4 Lesson 117 Workbook and Comprehension Questions</a>');
   });
 });
