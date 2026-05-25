@@ -27,7 +27,7 @@ describe('matchMultipleResources', () => {
 });
 
 describe('generateCanvasPageHtml resource grouping', () => {
-  it('renders only Saxon Math Textbook and Lesson Odds links for Math', () => {
+  it('renders only Saxon Math Textbook and current-week Lesson Odds links for Math', () => {
     const html = generateCanvasPageHtml({
       subject: 'Math',
       rows: [
@@ -49,7 +49,19 @@ describe('generateCanvasPageHtml resource grouping', () => {
           lesson_num: '23',
           in_class: 'Lesson 23',
           at_home: '',
-          canvas_url: null,
+          canvas_url: 'https://x/courses/1/assignments/23',
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Math',
+          resources: null,
+        },
+        {
+          day: 'Wednesday',
+          type: 'Test',
+          lesson_num: '23',
+          in_class: 'Unit Test',
+          at_home: '',
+          canvas_url: 'https://x/courses/1/assignments/999',
           canvas_assignment_id: null,
           object_id: null,
           subject: 'Math',
@@ -67,17 +79,19 @@ describe('generateCanvasPageHtml resource grouping', () => {
       quarterColor: '#0065a7',
       contentMap,
     });
-    // Only Saxon Math Textbook and Lesson 117 Odds should appear in the resources block
+    // Only Saxon Math Textbook and current-week lesson rows should appear in the resources block
     expect(html).toContain('Saxon Math Textbook');
     expect(html).toContain('Lesson 117 Odds');
+    expect(html).toContain('Lesson 23 Odds');
     // Power Ups, Study Guides, and subjectResources Packet must not appear
     expect(html).not.toContain('<strong>Study Guides:</strong>');
     expect(html).not.toContain('Study Guide 23 Blank');
     expect(html).not.toContain('<strong>Power Ups:</strong>');
     expect(html).not.toContain('Packet 1');
     expect(html).not.toContain('Packet 2');
-    // Lesson 23 has no canvas_url so no Odds link for it
-    expect(html).not.toContain('Lesson 23 Odds');
+    // Non-lesson rows should not inject Odds links.
+    expect(html).toContain('title="Lesson 23 Odds" href="https://x/courses/1/assignments/23"');
+    expect(html).not.toContain('title="Lesson 23 Odds" href="https://x/courses/1/assignments/999"');
   });
 
   it('injects math study guide links into reminders when a test row exists', () => {
