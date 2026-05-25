@@ -213,7 +213,7 @@ export default function DeploymentWizard() {
           const updates = Object.entries(draftEdits.announcement);
 
           for (const [id, edit] of updates) {
-            const payload: Record<string, string> = {};
+            const payload: { title?: string; content?: string } = {};
             if (typeof edit.title === 'string') payload.title = edit.title;
             if (typeof edit.content === 'string') payload.content = edit.content;
             if (Object.keys(payload).length > 0) {
