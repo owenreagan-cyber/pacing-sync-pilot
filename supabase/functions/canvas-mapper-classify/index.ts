@@ -225,6 +225,36 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
   return normalized || fallback;
 }
 
+function applyManualRenameOverrides(originalName: string, suggestedName: string): string {
+  const original = (originalName || "").trim();
+  const proposed = (suggestedName || "").trim();
+  const source = proposed || original;
+  if (!source) return suggestedName;
+
+  const workbookMatch = source.match(/^reading workbook lesson\s*(\d{1,3})(?:\.pdf)?$/i);
+  if (workbookMatch) {
+    const lesson = workbookMatch[1];
+    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
+    return `Spelling Workbook Lesson ${lesson}${keepPdf ? ".pdf" : ""}`;
+  }
+
+  const compactSource = source.replace(/[\s-]+/g, "_").toUpperCase();
+  const glossaryMap: Record<string, string> = {
+    R_GL_A: "Reading Glossary: Book A",
+    R_GL_B: "Reading Glossary: Book B",
+    R_GL_C: "Reading Glossary: Book C",
+  };
+  const glossaryKey = Object.keys(glossaryMap).find((key) =>
+    compactSource === key || compactSource === `${key}.PDF`
+  );
+  if (glossaryKey) {
+    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
+    return `${glossaryMap[glossaryKey]}${keepPdf ? ".pdf" : ""}`;
+  }
+
+  return suggestedName;
+}
+
 function normalizeSnippetText(text: string, max = SNIPPET_MAX_CHARS): string {
   return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -579,6 +609,10 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
       fileContentSnippet,
       shouldChunkLessons,
     );
+    mapped = {
+      ...mapped,
+      suggestedName: applyManualRenameOverrides(displayName, mapped.suggestedName),
+    };
 
     if (duplicateMatch.isDuplicate) {
       mapped = {

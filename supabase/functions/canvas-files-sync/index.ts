@@ -61,7 +61,7 @@ function sanitizePrefix(prefix: string): string {
 function sanitizeCanvasFileName(name: string): string {
   const normalized = name
     .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}\s._()-]/gu, "")
+    .replace(/[^\p{L}\p{N}\s._()\-:]/gu, "")
     .replace(/\s+/g, " ")
     .replace(/\.{2,}/g, ".")
     .trim();
