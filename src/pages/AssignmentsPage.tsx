@@ -49,10 +49,7 @@ const FILTER_CHIPS = ['All', 'Math', 'Reading', 'Language Arts', 'Spelling'];
 type DeployStatus = 'NEW' | 'UPDATE' | 'NO_CHANGE' | 'SKIP' | 'ERROR' | 'DEPLOYED';
 
 interface PreviewRow extends BuiltAssignment {
-  dayIndex: number;
-  rowKey: string;
   status: DeployStatus;
-  isSynthetic?: boolean;
 }
 
 interface PacingDbRow {
@@ -192,8 +189,8 @@ export default function AssignmentsPage() {
 
       function toPreview(a: BuiltAssignment): PreviewRow {
         const dayIndex = DAYS.indexOf(a.day);
-        const rowKey = `${a.subject}_${dayIndex}_${a.type}_${a.lesson_num}`;
-        const dbRow = findDbRow(a.subject, dayIndex, a.type, a.lesson_num);
+        const rowKey = `${a.subject}_${dayIndex}_${a.type}_${a.lessonNum}`;
+        const dbRow = findDbRow(a.subject, dayIndex, a.type, a.lessonNum);
         let status: DeployStatus = 'NEW';
         if (dbRow) {
           const oldHash = dbRow.content_hash;
@@ -206,12 +203,17 @@ export default function AssignmentsPage() {
       for (const subject of SUBJECTS) {
         for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
           const day = DAYS[dayIdx];
-          const cell = { day, dayIndex: dayIdx, isTest: false };
-
           const row = pacingRows.find(
             (r: any) => r.subject === subject && r.day === day,
           );
           if (!row) continue;
+          const cell = {
+            value: row.lesson_num || '',
+            lessonNum: row.lesson_num || '',
+            isTest: (row.type || '').toLowerCase().includes('test'),
+            isReview: false,
+            isNoClass: isDash(row.type),
+          };
 
           // Skip rows with dash-like types
           if (isDash(row.type)) {
@@ -353,7 +355,7 @@ export default function AssignmentsPage() {
 
     setDeployResults(results);
     toast.success(`${ok} deployed, ${err} failed`, { id: toastId });
-    void logDeployHabit(deployable.map((r) => r.subject));
+    for (const s of new Set(deployable.map((r) => r.subject))) void logDeployHabit(s);
     setDeploying(false);
   };
 

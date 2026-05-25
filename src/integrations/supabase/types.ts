@@ -713,33 +713,39 @@ export type Database = {
       }
       system_config: {
         Row: {
+          admin_email: string | null
           assignment_prefixes: Json
           auto_logic: Json
           canvas_base_url: string | null
           course_ids: Json
           id: string
+          morning_digest_emails: string[]
           power_up_map: Json
           quarter_colors: Json
           spelling_word_bank: Json
           updated_at: string | null
         }
         Insert: {
+          admin_email?: string | null
           assignment_prefixes?: Json
           auto_logic?: Json
           canvas_base_url?: string | null
           course_ids?: Json
           id?: string
+          morning_digest_emails?: string[]
           power_up_map?: Json
           quarter_colors?: Json
           spelling_word_bank?: Json
           updated_at?: string | null
         }
         Update: {
+          admin_email?: string | null
           assignment_prefixes?: Json
           auto_logic?: Json
           canvas_base_url?: string | null
           course_ids?: Json
           id?: string
+          morning_digest_emails?: string[]
           power_up_map?: Json
           quarter_colors?: Json
           spelling_word_bank?: Json
