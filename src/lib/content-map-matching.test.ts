@@ -8,6 +8,9 @@ const contentMap: ContentMapEntry[] = [
   { subject: 'Math', lesson_ref: 'Math_StudyGuide_23_Completed', canonical_name: 'Study Guide 23 Key', canvas_url: 'https://x/courses/1/files/sg23k' },
   { subject: 'Math', lesson_ref: 'Math_PowerUp_E', canonical_name: 'Power Up E', canvas_url: 'https://x/courses/1/files/pue' },
   { subject: 'Math', lesson_ref: 'Math_Textbook', canonical_name: 'Math Textbook', canvas_url: 'https://x/courses/1/files/tb' },
+  { subject: 'Math', lesson_ref: 'Math_Lesson_117', canonical_name: 'Math Textbook Lesson 117.pdf', canvas_url: 'https://x/courses/1/files/l117tb' },
+  { subject: 'Math', lesson_ref: 'Math_Lesson_118', canonical_name: 'Math Textbook Lesson 118.pdf', canvas_url: 'https://x/courses/1/files/l118tb' },
+  { subject: 'Math', lesson_ref: 'Math_Lesson_119', canonical_name: 'Math Textbook Lesson 119.pdf', canvas_url: 'https://x/courses/1/files/l119tb' },
   { subject: 'Math', lesson_ref: 'Math_Lesson_023', canonical_name: 'Lesson 23 Textbook', canvas_url: 'https://x/courses/1/files/l23' },
   { subject: 'Math', lesson_ref: 'Math_Reteaching_L021', canonical_name: 'Reteaching 21-30', canvas_url: 'https://x/courses/1/files/rt' },
   { subject: 'Math', lesson_ref: 'Math_Mastery_023', canonical_name: 'Mastery Worksheet 23', canvas_url: 'https://x/courses/1/files/ws' },
@@ -27,7 +30,7 @@ describe('matchMultipleResources', () => {
 });
 
 describe('generateCanvasPageHtml resource grouping', () => {
-  it('renders only Saxon Math Textbook and current-week Lesson Odds links for Math', () => {
+  it('renders Saxon Math Textbook, lesson-specific textbook files, and current-week Lesson Odds links for Math', () => {
     const html = generateCanvasPageHtml({
       subject: 'Math',
       rows: [
@@ -46,10 +49,10 @@ describe('generateCanvasPageHtml resource grouping', () => {
         {
           day: 'Tuesday',
           type: 'Lesson',
-          lesson_num: '23',
-          in_class: 'Lesson 23',
+          lesson_num: '118',
+          in_class: 'Lesson 118',
           at_home: '',
-          canvas_url: 'https://x/courses/1/assignments/23',
+          canvas_url: 'https://x/courses/1/assignments/118',
           canvas_assignment_id: null,
           object_id: null,
           subject: 'Math',
@@ -57,8 +60,20 @@ describe('generateCanvasPageHtml resource grouping', () => {
         },
         {
           day: 'Wednesday',
+          type: 'Lesson',
+          lesson_num: '119',
+          in_class: 'Lesson 119',
+          at_home: '',
+          canvas_url: 'https://x/courses/1/assignments/119',
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Math',
+          resources: null,
+        },
+        {
+          day: 'Thursday',
           type: 'Test',
-          lesson_num: '23',
+          lesson_num: '119',
           in_class: 'Unit Test',
           at_home: '',
           canvas_url: 'https://x/courses/1/assignments/999',
@@ -79,10 +94,14 @@ describe('generateCanvasPageHtml resource grouping', () => {
       quarterColor: '#0065a7',
       contentMap,
     });
-    // Only Saxon Math Textbook and current-week lesson rows should appear in the resources block
+    // Only Saxon Math Textbook, lesson-specific textbook files, and current-week lesson rows should appear.
     expect(html).toContain('Saxon Math Textbook');
+    expect(html).toContain('Math Textbook Lesson 117.pdf');
+    expect(html).toContain('Math Textbook Lesson 118.pdf');
+    expect(html).toContain('Math Textbook Lesson 119.pdf');
     expect(html).toContain('Lesson 117 Odds');
-    expect(html).toContain('Lesson 23 Odds');
+    expect(html).toContain('Lesson 118 Odds');
+    expect(html).toContain('Lesson 119 Odds');
     // Power Ups, Study Guides, and subjectResources Packet must not appear
     expect(html).not.toContain('<strong>Study Guides:</strong>');
     expect(html).not.toContain('Study Guide 23 Blank');
@@ -90,8 +109,8 @@ describe('generateCanvasPageHtml resource grouping', () => {
     expect(html).not.toContain('Packet 1');
     expect(html).not.toContain('Packet 2');
     // Non-lesson rows should not inject Odds links.
-    expect(html).toContain('title="Lesson 23 Odds" href="https://x/courses/1/assignments/23"');
-    expect(html).not.toContain('title="Lesson 23 Odds" href="https://x/courses/1/assignments/999"');
+    expect(html).toContain('title="Lesson 118 Odds" href="https://x/courses/1/assignments/118"');
+    expect(html).not.toContain('title="Lesson 119 Odds" href="https://x/courses/1/assignments/999"');
   });
 
   it('injects math study guide links into reminders when a test row exists', () => {

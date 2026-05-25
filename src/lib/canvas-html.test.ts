@@ -78,4 +78,34 @@ describe('shouldExcludeResource', () => {
     expect(html).toContain('Spelling Master Word List.pdf');
     expect(html).not.toContain('Reading Glossary: Book A.pdf');
   });
+
+  it('renders Math homework fallback as a clickable Lesson Odds assignment link', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Math',
+      rows: [
+        {
+          day: 'Monday',
+          type: 'Lesson',
+          lesson_num: '117',
+          in_class: 'Lesson 117',
+          at_home: null,
+          canvas_url: 'https://x/courses/1/assignments/117',
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Math',
+          resources: null,
+        },
+      ],
+      quarter: 'Q4',
+      weekNum: 7,
+      dateRange: '2026-04-01 – 2026-04-05',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: [],
+    });
+
+    expect(html).toContain('<h4 class="kl_solid_border" style="color: #ffffff; background-color: #333333; padding-left: 40px; border-width: 0px; width: 60%;"><strong>Homework</strong></h4>');
+    expect(html).toContain('title="Lesson 117 Odds" href="https://x/courses/1/assignments/117"');
+  });
 });

@@ -440,6 +440,24 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     return txt;
   };
 
+  const findMathLessonTextbookResource = (lessonNum: string | null | undefined): Resource | null => {
+    const num = Number.parseInt((lessonNum || '').trim(), 10);
+    if (!Number.isFinite(num)) return null;
+    const entry = contentMap.find((candidate) => {
+      const url = candidate.canvas_url || '';
+      if (!url || candidate.subject !== 'Math' || !url.includes('/files/')) return false;
+      const summary = `${candidate.lesson_ref || ''} ${candidate.canonical_name || ''}`.toLowerCase();
+      const isLessonTextbook = summary.includes('math_lesson_')
+        || (summary.includes('lesson') && summary.includes('textbook'));
+      return isLessonTextbook && matchesLessonNumber(summary, String(num));
+    });
+    if (!entry?.canvas_url) return null;
+    return {
+      label: entry.canonical_name || `Lesson ${num} Textbook`,
+      url: entry.canvas_url,
+    };
+  };
+
   const formatAtHomeText = (row: CanvasPageRow | undefined, fallbackText?: string): string => {
     if (!row) return fallbackText || '';
     const raw = (row.at_home || '').trim();
@@ -547,21 +565,30 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     // Math Resources: show only the Saxon Math Textbook and current-week Lesson Odds links.
     const textbookEntry = contentMap.find((e) => e.lesson_ref === 'Math_Textbook' && e.canvas_url);
     const mathResources: Resource[] = [];
+    const seenMathResources = new Set<string>();
+    const pushMathResource = (resource: Resource | null) => {
+      if (!resource) return;
+      const key = resourceDedupKey(resource);
+      if (seenMathResources.has(key)) return;
+      seenMathResources.add(key);
+      mathResources.push(resource);
+    };
     if (textbookEntry?.canvas_url) {
-      mathResources.push({ label: 'Saxon Math Textbook', url: textbookEntry.canvas_url });
+      pushMathResource({ label: 'Saxon Math Textbook', url: textbookEntry.canvas_url });
     }
     const seenLessonOdds = new Set<string>();
     for (const row of rows) {
-      if (!row.canvas_url) continue;
       const rowType = (row.type || '').toLowerCase();
       const isLessonRow = rowType.includes('lesson') || /\blesson\b/i.test(row.in_class || '');
       if (!isLessonRow) continue;
       const n = Number.parseInt((row.lesson_num || '').trim(), 10);
       if (!Number.isFinite(n)) continue;
+      pushMathResource(findMathLessonTextbookResource(String(n)));
+      if (!row.canvas_url) continue;
       const label = `Lesson ${n} Odds`;
       if (seenLessonOdds.has(label)) continue;
       seenLessonOdds.add(label);
-      mathResources.push({ label, url: row.canvas_url });
+      pushMathResource({ label, url: row.canvas_url });
     }
     if (mathResources.length > 0) {
       parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
@@ -716,8 +743,14 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       const hasMultipleSubjectsAH = new Set(dayRows.map((r) => r.subject)).size > 1;
       for (const r of dayRows) {
         const raw = (r.at_home || '').trim();
-        if (!raw) continue;
-        let txt = stripLessonTitle(raw, r.subject);
+        const rowType = (r.type || '').toLowerCase();
+        const lessonNum = Number.parseInt((r.lesson_num || '').trim(), 10);
+        const isMathLessonRow = r.subject === 'Math'
+          && Number.isFinite(lessonNum)
+          && (rowType.includes('lesson') || /\blesson\b/i.test(r.in_class || ''));
+        const fallback = !raw && isMathLessonRow ? `Lesson ${lessonNum} Odds` : '';
+        if (!raw && !fallback) continue;
+        let txt = raw ? stripLessonTitle(raw, r.subject) : fallback;
         txt = injectFileLinks(txt, contentMap, r.subject);
         const shouldLink = Boolean(r.canvas_url) && (r.subject === 'Math' || r.subject === 'Reading' || r.subject === 'Spelling');
         const sPfx = hasMultipleSubjectsAH ? `<strong>${r.subject}:</strong> ` : '';
