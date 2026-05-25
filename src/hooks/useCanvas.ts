@@ -35,8 +35,8 @@ export function useDeployPage() {
   return useMutation({
     mutationFn: (input: DeployPageInput) => callEdge<EdgeResult>('canvas-deploy-page', input),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['deploy_log'] });
-      qc.invalidateQueries({ queryKey: ['weeks'] });
+      void qc.invalidateQueries({ queryKey: ['deploy_log'] });
+      void qc.invalidateQueries({ queryKey: ['weeks'] });
       if (data?.status === 'BLOCKED') toast.warning(data.message || 'Page deploy blocked');
       else toast.success('Page deployed');
     },
@@ -50,8 +50,8 @@ export function useDeployAssignment() {
     mutationFn: (input: DeployAssignmentInput) =>
       callEdge<EdgeResult>('canvas-deploy-assignment', input),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['deploy_log'] });
-      qc.invalidateQueries({ queryKey: ['pacing_rows'] });
+      void qc.invalidateQueries({ queryKey: ['deploy_log'] });
+      void qc.invalidateQueries({ queryKey: ['pacing_rows'] });
       if (data?.status === 'BLOCKED') toast.warning(data.message || 'Assignment blocked by rule');
       else toast.success('Assignment deployed');
     },
@@ -64,7 +64,7 @@ export function useFilesSync() {
   return useMutation({
     mutationFn: () => callEdge<EdgeResult>('canvas-files-sync', {}),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['files'] });
+      void qc.invalidateQueries({ queryKey: ['files'] });
       toast.success('Canvas files synced');
     },
     onError: (e: Error) => toast.error(`File sync failed: ${e.message}`),

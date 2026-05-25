@@ -57,7 +57,7 @@ export default function CanvasAuditorPage() {
     );
   }, [audit]);
 
-  const totalPages = useMemo(() => {
+  const _totalPages = useMemo(() => {
     if (!audit) return 0;
     return Object.values<any>(audit.courses).filter((c) => c.page).length;
   }, [audit]);
@@ -71,7 +71,7 @@ export default function CanvasAuditorPage() {
         body: { weekSlug, weekStartDate },
       });
       if (error) throw error;
-      if ((data as any).error) throw new Error((data as any).error);
+      if ((data).error) throw new Error((data).error);
       setAudit(data);
       const f = validateAudit(data);
       setFindings(f);

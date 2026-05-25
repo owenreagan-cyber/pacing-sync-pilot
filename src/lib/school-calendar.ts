@@ -19,7 +19,7 @@ export async function loadSchoolCalendar(supabase: any): Promise<CalendarEvent[]
     .eq('school_year', '2025-2026')
     .order('date');
   _cache = (data || []).map((r: any) => ({ ...r, date: r.date as string }));
-  return _cache!;
+  return _cache;
 }
 
 export function clearSchoolCalendarCache(): void {

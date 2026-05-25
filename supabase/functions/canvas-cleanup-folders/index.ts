@@ -18,6 +18,12 @@ interface CanvasFolder {
   parent_folder_id: number | null;
 }
 
+interface TargetFolder {
+  courseId: number;
+  folderId: number;
+  folderName?: string | null;
+}
+
 async function fetchAllFolders(baseUrl: string, token: string, courseId: number): Promise<CanvasFolder[]> {
   const out: CanvasFolder[] = [];
   let page = 1;
@@ -36,12 +42,52 @@ async function fetchAllFolders(baseUrl: string, token: string, courseId: number)
   return out;
 }
 
+async function fetchFolder(baseUrl: string, token: string, folderId: number): Promise<CanvasFolder | null> {
+  const r = await fetch(`${baseUrl}/api/v1/folders/${folderId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) return null;
+  return await r.json() as CanvasFolder;
+}
+
+async function writeRollbackLog(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  folder: CanvasFolder,
+  courseId: number,
+): Promise<void> {
+  const { error } = await supabase.from("dev_canvas_logs").insert({
+    deployment_mode: "live",
+    action: "canvas_folder_delete_rollback",
+    subject: "File Organizer Cleanup",
+    course_id: courseId,
+    status: "pending",
+    metadata: {
+      folderId: folder.id,
+      folderName: folder.full_name,
+      rollbackAction: "Recreate the deleted source folder if a move needs to be manually reversed.",
+    },
+  });
+  if (error) {
+    console.warn("canvas-cleanup-folders rollback log failed", error);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const body = await req.json().catch(() => ({}));
     const dryRun: boolean = body?.dryRun === true;
+    const targetFolders: TargetFolder[] = Array.isArray(body?.targetFolders)
+      ? body.targetFolders
+        .map((item: Partial<TargetFolder>) => ({
+          courseId: Number(item?.courseId),
+          folderId: Number(item?.folderId),
+          folderName: item?.folderName ?? null,
+        }))
+        .filter((item) => Number.isFinite(item.courseId) && Number.isFinite(item.folderId))
+      : [];
 
     const baseUrl = (Deno.env.get("CANVAS_BASE_URL") || "").replace(/\/$/, "");
     const token = Deno.env.get("CANVAS_API_TOKEN");
@@ -74,22 +120,14 @@ Deno.serve(async (req) => {
       folders: [] as Array<{ courseId: number; folderId: number; name: string; action: string }>,
     };
 
-    for (const courseId of courseIds) {
-      summary.coursesScanned++;
-      const folders = await fetchAllFolders(baseUrl, token, courseId);
-
-      // Delete empty folders — bottom-up (no children) first to avoid conflicts
-      // Sort so that deeper folders (longer full_name) come first
-      const emptyFolders = folders
-        .filter((f) => f.files_count === 0 && f.folders_count === 0 && f.parent_folder_id !== null)
-        .sort((a, b) => b.full_name.length - a.full_name.length);
-
-      for (const folder of emptyFolders) {
+      const deleteFolder = async (courseId: number, folder: CanvasFolder) => {
         if (dryRun) {
           summary.foldersSkipped++;
           summary.folders.push({ courseId, folderId: folder.id, name: folder.full_name, action: "dry_run" });
-          continue;
+          return;
         }
+
+        await writeRollbackLog(supabase, folder, courseId);
 
         const r = await fetch(`${baseUrl}/api/v1/folders/${folder.id}`, {
           method: "DELETE",
@@ -117,8 +155,66 @@ Deno.serve(async (req) => {
             payload: { courseId, folderId: folder.id },
           });
         }
+      };
+
+      if (targetFolders.length > 0) {
+        const seen = new Set<string>();
+        for (const target of targetFolders) {
+          const key = `${target.courseId}:${target.folderId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          if (!courseIds.includes(target.courseId)) {
+            summary.foldersSkipped++;
+            summary.folders.push({
+              courseId: target.courseId,
+              folderId: target.folderId,
+              name: target.folderName ?? `folder-${target.folderId}`,
+              action: "course_not_configured",
+            });
+            continue;
+          }
+
+          summary.coursesScanned++;
+          const folder = await fetchFolder(baseUrl, token, target.folderId);
+          if (!folder) {
+            summary.foldersSkipped++;
+            summary.folders.push({
+              courseId: target.courseId,
+              folderId: target.folderId,
+              name: target.folderName ?? `folder-${target.folderId}`,
+              action: "not_found",
+            });
+            continue;
+          }
+
+          if (folder.files_count !== 0 || folder.folders_count !== 0 || folder.parent_folder_id === null) {
+            summary.foldersSkipped++;
+            summary.folders.push({
+              courseId: target.courseId,
+              folderId: folder.id,
+              name: folder.full_name,
+              action: "not_empty",
+            });
+            continue;
+          }
+
+          await deleteFolder(target.courseId, folder);
+        }
+      } else {
+        for (const courseId of courseIds) {
+          summary.coursesScanned++;
+          const folders = await fetchAllFolders(baseUrl, token, courseId);
+
+          const emptyFolders = folders
+            .filter((f) => f.files_count === 0 && f.folders_count === 0 && f.parent_folder_id !== null)
+            .sort((a, b) => b.full_name.length - a.full_name.length);
+
+          for (const folder of emptyFolders) {
+            await deleteFolder(courseId, folder);
+          }
+        }
       }
-    }
 
     await supabase.from("deploy_log").insert({
       action: "canvas-cleanup-folders",

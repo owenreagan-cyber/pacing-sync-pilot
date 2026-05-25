@@ -64,12 +64,12 @@ export default function AutomationPage() {
   }
 
   useEffect(() => {
-    load();
+    void load();
     const ch = supabase
       .channel('automation-jobs-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'automation_jobs' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'automation_jobs' }, () => { void load(); })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => { void supabase.removeChannel(ch); };
   }, []);
 
   async function runNow(jobName: string) {
@@ -78,20 +78,20 @@ export default function AutomationPage() {
     try {
       const { data, error } = await supabase.functions.invoke(jobName, { body: {} });
       if (error) throw error;
-      const ok = (data as any)?.success !== false;
+      const ok = (data)?.success !== false;
       if (ok) toast.success(`${jobName} complete`);
-      else toast.error(`${jobName} failed`, { description: (data as any)?.error });
+      else toast.error(`${jobName} failed`, { description: (data)?.error });
     } catch (e) {
       toast.error(`${jobName} failed`, { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setRunning((p) => ({ ...p, [jobName]: false }));
-      load();
+      void load();
     }
   }
 
   async function toggleEnabled(job: Job, enabled: boolean) {
     await supabase.from('automation_jobs').update({ enabled }).eq('id', job.id);
-    load();
+    void load();
   }
 
   const statusVariant = (s: string) =>
@@ -205,7 +205,7 @@ export default function AutomationPage() {
                     <TableCell className="text-xs text-muted-foreground max-w-md truncate">{f.message}</TableCell>
                     <TableCell className="text-right">
                       {f.action && jobs.some((j) => j.job_name === f.action) && (
-                        <Button size="sm" variant="outline" onClick={() => runNow(f.action!)}>
+                        <Button size="sm" variant="outline" onClick={() => runNow(f.action)}>
                           Retry
                         </Button>
                       )}

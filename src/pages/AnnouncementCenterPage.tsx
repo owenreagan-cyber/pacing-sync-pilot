@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Megaphone, Clock, Send, Plus, Trash2, RefreshCw, Loader2, CheckCircle2, BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { useConfig, type AppConfig } from '@/lib/config';
+import { useConfig } from '@/lib/config';
 import { callEdge } from '@/lib/edge';
 import { useRealtimeDeploy } from '@/hooks/use-realtime-deploy';
 import { TOGETHER_LOGIC_COURSE_ID, getCourseId } from '@/lib/course-ids';
@@ -133,7 +133,7 @@ export default function AnnouncementCenterPage() {
   const [rmCheckoutLesson, setRmCheckoutLesson] = useState('');
 
   const handleRealtimeEvent = useCallback(() => {
-    loadAnnouncements(selectedWeekId || undefined);
+    void loadAnnouncements(selectedWeekId || undefined);
   }, [selectedWeekId]);
   useRealtimeDeploy(handleRealtimeEvent);
 
@@ -152,7 +152,7 @@ export default function AnnouncementCenterPage() {
   };
 
   useEffect(() => {
-    loadAnnouncements(selectedWeekId || undefined);
+    void loadAnnouncements(selectedWeekId || undefined);
   }, [selectedWeekId]);
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -238,8 +238,21 @@ export default function AnnouncementCenterPage() {
       if (readingTest || spellingTest) {
         const rNum = readingTest?.lesson_num || '';
         const sNum = parseInt(spellingTest?.lesson_num || '0', 10) || 0;
-        const dateStr = readingTest?.day || spellingTest?.day || 'this week';
+        const _dateStr = readingTest?.day || spellingTest?.day || 'this week';
         const rFluency = getReadingFluencyTarget(rNum);
+        let answerKeyUrl: string | undefined = readingTest?.object_id?.startsWith('http')
+          ? readingTest.object_id
+          : undefined;
+        if (!answerKeyUrl && rNum) {
+          // Look for a completed/answer study guide in content_map
+          const { data: sgEntry } = await supabase
+            .from('content_map')
+            .select('canvas_url')
+            .eq('subject', 'Reading')
+            .or(`canonical_name.ilike.%Mastery%${rNum}%Completed%,canonical_name.ilike.%Test%${rNum}%Answer%,canonical_name.ilike.%Review%${rNum}%KEY%`)
+            .maybeSingle();
+          if (sgEntry?.canvas_url) answerKeyUrl = sgEntry.canvas_url;
+        }
 
         drafts.push({
           week_id: selectedWeekId,
@@ -257,9 +270,8 @@ export default function AnnouncementCenterPage() {
                   readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
                   fluencyGoalWpm: rFluency.wpm,
                   fluencyMaxErrors: rFluency.maxErrors,
-                  checkoutLesson: rNum,
                   blankStudyGuideUrl: readingTest.canvas_url || undefined,
-                  answerKeyUrl: readingTest.object_id?.startsWith('http') ? readingTest.object_id : undefined,
+                  answerKeyUrl,
                 }
               : undefined,
             spelling: sNum
@@ -343,7 +355,7 @@ export default function AnnouncementCenterPage() {
       if (error) throw error;
 
       toast.success(`Auto-generated ${drafts.length} announcement(s)`);
-      loadAnnouncements(selectedWeekId);
+      void loadAnnouncements(selectedWeekId);
     } catch (e: any) {
       toast.error('Auto-generate failed', { description: e.message });
     }
@@ -366,7 +378,7 @@ export default function AnnouncementCenterPage() {
           readingTestPhrases: config?.autoLogic?.readingTestPhrases || [],
           fluencyGoalWpm: rmFluency.wpm,
           fluencyMaxErrors: rmFluency.maxErrors,
-          checkoutLesson: rmCheckoutLesson || rmTestNum,
+          checkoutLesson: rmCheckoutLesson || (rmTestNum ? String(parseInt(rmTestNum, 10) * 10) : undefined),
         },
       });
       const { error } = await supabase.from('announcements').insert({
@@ -383,7 +395,7 @@ export default function AnnouncementCenterPage() {
       toast.success('Reading Mastery draft created');
       setShowRM(false);
       setRmTestNum(''); setRmTestDate(''); setRmCheckoutLesson('');
-      loadAnnouncements(selectedWeekId || undefined);
+      void loadAnnouncements(selectedWeekId || undefined);
     } catch (e: any) {
       toast.error('Create failed', { description: e.message });
     }
@@ -453,7 +465,7 @@ export default function AnnouncementCenterPage() {
           readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
           fluencyGoalWpm: rtWpm,
           fluencyMaxErrors: rtMaxErrors,
-          checkoutLesson: lessonNum,
+          checkoutLesson: undefined,
         });
         setFormTitle(`📚 Reading Mastery Test ${lessonNum} — Reminder`);
         setFormContent(html);
@@ -469,7 +481,7 @@ export default function AnnouncementCenterPage() {
                 readingTestPhrases: config.autoLogic?.readingTestPhrases || [],
                 fluencyGoalWpm: cFluency.wpm,
                 fluencyMaxErrors: cFluency.maxErrors,
-                checkoutLesson: lessonNum,
+                checkoutLesson: undefined,
               }
             : undefined,
           spelling: sNum ? { testNum: sNum, wordBank: config.spellingWordBank || {} } : undefined,
@@ -517,7 +529,7 @@ export default function AnnouncementCenterPage() {
       setShowForm(false);
       setFormTitle(''); setFormContent(''); setFormSubject('');
       setTplTestNum(''); setTplLessonNum('');
-      loadAnnouncements(selectedWeekId || undefined);
+      void loadAnnouncements(selectedWeekId || undefined);
     } catch (e: any) {
       toast.error('Create failed', { description: e.message });
     }
@@ -556,7 +568,7 @@ export default function AnnouncementCenterPage() {
       if (error) throw error;
       toast.success('Announcement updated');
       setEditingAnn(null);
-      loadAnnouncements(selectedWeekId || undefined);
+      void loadAnnouncements(selectedWeekId || undefined);
     } catch (e: any) {
       toast.error('Save failed', { description: e.message });
     }
@@ -610,7 +622,7 @@ export default function AnnouncementCenterPage() {
       void learnFromEdit('announcement', null, ann as never);
       void logDeployHabit(ann.subject || 'Announcement');
       toast.success(`Posted: ${ann.title}`);
-      loadAnnouncements(selectedWeekId || undefined);
+      void loadAnnouncements(selectedWeekId || undefined);
     } catch (e: any) {
       toast.error('Post failed', { description: e.message });
     }
@@ -833,12 +845,12 @@ export default function AnnouncementCenterPage() {
                   </div>
                   <div className="flex gap-2">
                     {ann.status === 'DRAFT' && (
-                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handlePost(ann); }} disabled={posting[ann.id]} className="gap-1 text-xs">
+                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); void handlePost(ann); }} disabled={posting[ann.id]} className="gap-1 text-xs">
                         {posting[ann.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
                         Post
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); handleDelete(ann.id); }} className="text-destructive hover:text-destructive">
+                    <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); void handleDelete(ann.id); }} className="text-destructive hover:text-destructive">
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
@@ -915,7 +927,7 @@ export default function AnnouncementCenterPage() {
             <Button variant="outline" onClick={() => setEditingAnn(null)}>Cancel</Button>
             <div className="flex gap-2">
               {editingAnn?.status === 'DRAFT' && (
-                <Button variant="secondary" onClick={async () => { await handleEditSave(); if (editingAnn) handlePost({ ...editingAnn, title: editTitle, content: editContent, scheduled_post: editScheduled }); }}>
+                <Button variant="secondary" onClick={async () => { await handleEditSave(); if (editingAnn) void handlePost({ ...editingAnn, title: editTitle, content: editContent, scheduled_post: editScheduled }); }}>
                   Save & Post Now
                 </Button>
               )}
@@ -940,66 +952,6 @@ function wrapper(subject: string, inner: string): string {
 function banner(subject: string, title: string): string {
   const color = SUBJECT_HEX[subject] || '#475569';
   return `<div class="kl_banner" style="background:${color};color:#fff;padding:14px 18px;border-radius:6px;margin-bottom:16px;"><h2 style="margin:0;font-size:20px;">${title}</h2></div>`;
-}
-
-interface MathArgs { lesson: string; day: string; powerUp: string; factTest: string; studyGuideUrl: string; weekLabel?: string; }
-
-function buildMathEarlyHtml(a: MathArgs): string {
-  const link = a.studyGuideUrl
-    ? `<p><a href="${a.studyGuideUrl}" style="color:#ea580c;font-weight:600;">📄 Study Guide</a></p>`
-    : '';
-  return wrapper('Math', `
-    ${banner('Math', `Math Test Coming Up — Lesson ${a.lesson}`)}
-    <p>Hi parents, a heads up that <strong>Math Test ${a.lesson}</strong> is scheduled for <strong>${a.day}</strong>.</p>
-    <ul>
-      <li><strong>Power Up:</strong> ${a.powerUp || '—'}</li>
-      <li><strong>Fact Test:</strong> ${a.factTest}</li>
-    </ul>
-    ${link}
-    <p>Please review the study guide together this weekend so students walk in confident.</p>
-  `);
-}
-
-function buildMathUrgentHtml(a: MathArgs): string {
-  const link = a.studyGuideUrl
-    ? `<p><a href="${a.studyGuideUrl}" style="color:#ea580c;font-weight:600;">📄 Study Guide</a></p>`
-    : '';
-  return wrapper('Math', `
-    ${banner('Math', `⚠️ Math Test ${a.lesson} — ${a.day}`)}
-    <p><strong>Quick reminder:</strong> the Math Test is just a couple days away.</p>
-    <ul>
-      <li><strong>Power Up:</strong> ${a.powerUp || '—'}</li>
-      <li><strong>Fact Test:</strong> ${a.factTest}</li>
-    </ul>
-    ${link}
-    <p>Tonight is a great night for one focused review pass.</p>
-  `);
-}
-
-interface RSArgs {
-  testNum: string;
-  testDate: string;
-  checkoutLesson: string;
-  spellingFocus: string[];
-  spellingTestNum: number | null;
-}
-
-function buildReadingSpellingHtml(a: RSArgs): string {
-  const spellingBlock = a.spellingTestNum && a.spellingFocus.length
-    ? `
-      <h3 style="color:#2563eb;margin-top:20px;">Spelling Test ${a.spellingTestNum}</h3>
-      <p><strong>Focus Words (21–25):</strong> ${a.spellingFocus.join(', ')}</p>
-    `
-    : '';
-  return wrapper('Reading', `
-    ${banner('Reading', `Reading Mastery Test ${a.testNum} — ${a.testDate}`)}
-    <p>Good afternoon, I hope you are having a great week so far!</p>
-    <p>The mastery test will cover story details, background information, and vocabulary from our recent lessons. Students will also be reading a timed fluency passage.</p>
-    <p><strong>Fluency goal:</strong> The goal of this fluency check is to read 100 words in one minute with 2 or fewer errors.</p>
-    <p>Make sure they are tracking and tapping so they do not miss any words or skip lines. Practice reading with your child every day, especially out loud.</p>
-    <p>For practice, the checkout passage will come from lesson ${a.checkoutLesson}, reading up to the flower.</p>
-    ${spellingBlock}
-  `);
 }
 
 function buildSubjectSummaryHtml(subject: string, rows: PacingRow[], weekLabel: string): string {
@@ -1092,14 +1044,22 @@ export function getWednesdayBefore(testDay: string): string {
   const test = new Date(now);
   test.setDate(now.getDate() + daysUntilTest);
 
+  // Find the Wednesday that is closest to 2 days before the test
+  // Thursday test (4) → Wed - 1 day before test
+  // Friday test (5) → Wed - 2 days before test
+  // Wednesday test (3) → Mon - 2 days before test (Mon is 2 days before Wed)
+  // Tuesday test (2) → Sun - 2 days before test (not ideal; use Monday)
+  // For all other days: go back to the most recent Monday (2 days before Wed) as fallback
   const wed = new Date(test);
-  if (targetDow === 4) {
-    wed.setDate(test.getDate() - 1);
-  } else if (targetDow === 5) {
-    wed.setDate(test.getDate() - 2);
+  if (targetDow === 4) { // Thursday
+    wed.setDate(test.getDate() - 1); // Wednesday
+  } else if (targetDow === 5) { // Friday
+    wed.setDate(test.getDate() - 2); // Wednesday
+  } else if (targetDow === 3) { // Wednesday
+    wed.setDate(test.getDate() - 2); // Monday (2 days before)
   } else {
-    const backToWednesday = (targetDow - 3 + 7) % 7;
-    wed.setDate(test.getDate() - backToWednesday);
+    // For other days, go 2 days before the test
+    wed.setDate(test.getDate() - 2);
   }
   return etDateAt(wed.getFullYear(), wed.getMonth(), wed.getDate(), 16);
 }

@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Download, Upload, RefreshCw, Edit2, Trash2, Plus } from 'lucide-react';
+import { Loader2, Upload, RefreshCw, Edit2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchGoogleSheetsPacing } from '@/lib/google-sheets-sync';
@@ -106,7 +106,7 @@ export default function MasterPacingPage() {
   };
 
   // Delete a row
-  const handleDeleteRow = async (row: MasterRow) => {
+  const _handleDeleteRow = async (row: MasterRow) => {
     if (!row.id) return;
 
     try {

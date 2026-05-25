@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -60,6 +60,7 @@ interface OrphanFile {
   ai_snippet: string | null;
   ai_resource_type: string | null;
   ai_folder_chunked: boolean | null;
+  ai_confidence: number | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -76,13 +77,46 @@ interface MapperResult {
   snippet: string;
   suggestedName: string;
   suggestedFolder: string;
+  confidence?: number;
   alreadyFormatted?: boolean;
+  fileHash?: string | null;
+  isDuplicate?: boolean;
+  canonicalFileId?: string | null;
 }
 
-const GLOBAL_MAPPER_SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
+interface CanvasReadFile {
+  id: number | string;
+  display_name?: string | null;
+  filename?: string | null;
+  url?: string | null;
+}
+
+interface CanvasReadFilesResponse {
+  ok?: boolean;
+  total?: number;
+  errors?: string[];
+  results?: Array<{
+    courseId?: number;
+    files?: CanvasReadFile[];
+    error?: string;
+  }>;
+}
+
 const MAPPER_MAX_CONCURRENCY = 5;
 const EXECUTE_CHUNK_SIZE = 25;
+const MASS_ORG_CHUNK_SIZE = 5;
 const PAUSE_POLL_MS = 150;
+const UNTITLED_SCAN_PATTERN = /^(untitled|scan)/i;
+
+function getCurrentPath(row: OrphanFile): string {
+  return (row.original_name ?? row.canvas_file_id).trim();
+}
+
+function getProposedPath(row: OrphanFile): string {
+  const proposedName = row.ai_suggested_name?.trim() || row.original_name?.trim() || row.canvas_file_id;
+  const proposedFolder = row.ai_suggested_folder?.trim();
+  return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,6 +162,19 @@ export default function FileOrganizerPage() {
   const [mapperPaused, setMapperPaused] = useState(false);
   const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
+  const [massOrganizing, setMassOrganizing] = useState(false);
+  const [cleanupUntitled, setCleanupUntitled] = useState(false);
+  const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
+  const [smartWorkflowRunning, setSmartWorkflowRunning] = useState(false);
+  const [smartWorkflowStep, setSmartWorkflowStep] = useState<string>('');
+  const [globalSweepProgress, setGlobalSweepProgress] = useState<{
+    current: number;
+    total: number;
+    label: string;
+    scanned: number;
+    upserted: number;
+    failedCourses: number;
+  } | null>(null);
   const mapperPausedRef = useRef(false);
   const mapperCancelRequestedRef = useRef(false);
   const mapperTableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -150,6 +197,31 @@ export default function FileOrganizerPage() {
     virtualMapperRows.length > 0
       ? mapperRowVirtualizer.getTotalSize() - virtualMapperRows[virtualMapperRows.length - 1].end
       : 0;
+  const strategyPreviewRows = useMemo(
+    () =>
+      mapperRows.map((row) => {
+        const currentPath = getCurrentPath(row);
+        const proposedPath = getProposedPath(row);
+        const confidence = row.ai_confidence ?? null;
+        return {
+          fileId: row.canvas_file_id,
+          currentPath,
+          proposedPath,
+          changed: currentPath !== proposedPath,
+          confidence,
+          needsReview: confidence !== null && confidence < 80,
+        };
+      }),
+    [mapperRows],
+  );
+  const canvasCourseIds = useMemo(
+    () => Array.from(new Set(courseOptions.map((opt) => opt.value).filter(Boolean))),
+    [courseOptions],
+  );
+  const courseLabelById = useMemo(
+    () => new Map(courseOptions.map((opt) => [opt.value, opt.label] as const)),
+    [courseOptions],
+  );
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -281,7 +353,7 @@ export default function FileOrganizerPage() {
           body: { canvasFileId: row.canvas_file_id },
         });
         if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
+        if ((data)?.error) throw new Error((data).error);
 
         const mappedRow = data as MapperResult;
         updateMapperRowField(row.canvas_file_id, {
@@ -291,6 +363,9 @@ export default function FileOrganizerPage() {
           ai_purpose: mappedRow.purpose,
           ai_snippet: mappedRow.snippet,
           ai_folder_chunked: !!mappedRow.suggestedFolder.match(/\d+\s*-\s*\d+/),
+          file_hash: mappedRow.fileHash ?? null,
+          is_duplicate: mappedRow.isDuplicate ?? false,
+          canonical_file_id: mappedRow.canonicalFileId ?? null,
         });
         mapped += 1;
       };
@@ -369,23 +444,21 @@ export default function FileOrganizerPage() {
       toast.error('No course IDs configured');
       return;
     }
-
-    const targetSubjects = new Set<string>(GLOBAL_MAPPER_SUBJECTS);
-    const selectedCourses = courseOptions.filter((opt) => targetSubjects.has(opt.label));
-    if (selectedCourses.length === 0) {
-      toast.error('No target subjects found in course IDs');
-      return;
-    }
+    const selectedCourses = courseOptions.filter((opt) => opt.value?.trim().length > 0);
 
     setMapperLoading(true);
     try {
       const rowsByCourse = await Promise.allSettled(
         selectedCourses.map(async (opt) => {
+          const parsedCourseId = Number.parseInt(opt.value, 10);
+          if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+            throw new Error(`${opt.label}: invalid course id "${opt.value}"`);
+          }
           const { data, error } = await supabase
             .from('canvas_orphan_files')
             .select('*')
             .eq('status', 'PENDING')
-            .eq('course_id', opt.value)
+            .eq('course_id', String(parsedCourseId))
             .order('created_at', { ascending: true });
           if (error) throw new Error(`${opt.label}: ${error.message}`);
           return (data ?? []) as OrphanFile[];
@@ -516,7 +589,7 @@ export default function FileOrganizerPage() {
           },
         });
         if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
+        if ((data)?.error) throw new Error((data).error);
         setMapperRows((prev) => prev.filter((r) => r.canvas_file_id !== row.canvas_file_id));
         setFiles((prev) => prev.filter((r) => r.canvas_file_id !== row.canvas_file_id));
         toast.success('Applied to Canvas', { description: row.ai_suggested_name ?? row.original_name ?? '' });
@@ -600,7 +673,228 @@ export default function FileOrganizerPage() {
     }
   }, [isDryRun, logMapperDryRunChanges, mapperRows, detectNameCollisions]);
 
-  // Load batch progress on mount (for resume on reload)
+  /**
+   * Safe Execution Loop — processes files in chunks of MASS_ORG_CHUNK_SIZE (5)
+   * using Promise.all to avoid Canvas API rate-limiting (429 errors).
+   *
+   * Before each chunk the full "Before State" is written to dev_canvas_logs as a
+   * failsafe/rollback record. On per-file failure the row is marked FAILED in
+   * canvas_orphan_files and the loop continues with the next chunk. After the
+   * run, any source folders reported by Canvas as empty are deleted via the
+   * canvas-cleanup-folders edge function.
+   */
+  const handleExecuteMassOrganization = useCallback(async () => {
+    if (mapperRows.length === 0) {
+      toast.info('No mapped rows to execute');
+      return;
+    }
+
+    setMassOrganizing(true);
+    setMapperProgressLabel('Safe-executing rename & move');
+    setMapperProgress({ current: 0, total: mapperRows.length });
+
+    const rows = [...mapperRows];
+    try {
+      if (isDryRun) {
+        const logged = await logMapperDryRunChanges(rows);
+        setMapperProgress({ current: rows.length, total: rows.length });
+        toast.success(`Dry Run: Logged ${logged} changes to simulation database`);
+        return;
+      }
+
+      const chunks: OrphanFile[][] = [];
+      for (let i = 0; i < rows.length; i += MASS_ORG_CHUNK_SIZE) {
+        chunks.push(rows.slice(i, i + MASS_ORG_CHUNK_SIZE));
+      }
+
+      const succeededIds = new Set<string>();
+      const failedIds = new Set<string>();
+      const emptiedSourceFolders = new Map<string, { courseId: number; folderId: number; folderName: string }>();
+      let processed = 0;
+
+      for (const chunk of chunks) {
+        // Failsafe: log "Before State" for every file in the chunk before touching Canvas
+        const beforeStateEntries = chunk.map((row) => ({
+          deployment_mode: 'live',
+          action: 'mass_organization_before_state',
+          subject: 'File Organizer Safe Execution',
+          course_id: row.course_id ? Number.parseInt(row.course_id, 10) : null,
+          status: 'before_state',
+          metadata: {
+            fileId: row.canvas_file_id,
+            originalName: row.original_name,
+            currentStatus: row.status,
+            suggestedName: row.ai_suggested_name,
+            suggestedFolder: row.ai_suggested_folder,
+          },
+        }));
+        try {
+          await (supabase as any).from('dev_canvas_logs').insert(beforeStateEntries);
+        } catch {
+          // Non-fatal: don't abort the whole loop if logging fails
+          console.warn('handleExecuteMassOrganization: failed to write before-state to dev_canvas_logs');
+        }
+
+        // Process chunk concurrently — 5 files at a time to avoid 429s
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
+                body: {
+                  fileId: row.canvas_file_id,
+                  suggestedName: row.ai_suggested_name,
+                  suggestedFolder: row.ai_suggested_folder,
+                },
+              });
+              if (error) throw error;
+              if ((data)?.error) throw new Error((data).error);
+
+              // The edge function returns { results: [{fileId, ok, error?}] } for single items
+              const result = (
+                data?.results as Array<{
+                  fileId: string;
+                  ok: boolean;
+                  error?: string;
+                  sourceFolder?: {
+                    courseId: number | null;
+                    folderId: number;
+                    fullName: string;
+                    parentFolderId: number | null;
+                    isEmpty: boolean;
+                  } | null;
+                }>
+              )?.[0];
+              if (result && !result.ok) {
+                throw new Error(result.error ?? 'Canvas execution failed');
+              }
+
+              succeededIds.add(row.canvas_file_id);
+              if (
+                result?.sourceFolder?.isEmpty &&
+                result.sourceFolder.courseId !== null &&
+                result.sourceFolder.parentFolderId !== null
+              ) {
+                emptiedSourceFolders.set(
+                  `${result.sourceFolder.courseId}:${result.sourceFolder.folderId}`,
+                  {
+                    courseId: result.sourceFolder.courseId,
+                    folderId: result.sourceFolder.folderId,
+                    folderName: result.sourceFolder.fullName,
+                  },
+                );
+              }
+            } catch (e: any) {
+              // Error recovery: mark the file as failed and continue with the next one
+              failedIds.add(row.canvas_file_id);
+              const errorMsg: string = e?.message ?? String(e);
+
+              await supabase
+                .from('canvas_orphan_files')
+                .update({ status: 'FAILED', updated_at: new Date().toISOString() })
+                .eq('canvas_file_id', row.canvas_file_id);
+
+              updateMapperRowField(row.canvas_file_id, { status: 'FAILED' });
+
+              try {
+                await (supabase as any).from('dev_canvas_logs').insert({
+                  deployment_mode: 'live',
+                  action: 'mass_organization_execute_failed',
+                  subject: 'File Organizer Safe Execution',
+                  course_id: row.course_id ? Number.parseInt(row.course_id, 10) : null,
+                  status: 'failed',
+                  error_message: `Failed - Manual Intervention Needed: ${errorMsg}`,
+                  metadata: {
+                    fileId: row.canvas_file_id,
+                    originalName: row.original_name,
+                    suggestedName: row.ai_suggested_name,
+                    suggestedFolder: row.ai_suggested_folder,
+                    error: errorMsg,
+                  },
+                });
+              } catch {
+                // Non-fatal
+              }
+            } finally {
+              processed += 1;
+              setMapperProgress({ current: processed, total: rows.length });
+            }
+          }),
+        );
+
+        // Brief pause between chunks to further reduce 429 risk
+        await sleep(200);
+      }
+
+      // Remove succeeded files from the local UI queue
+      setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
+      setFiles((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
+
+      if (emptiedSourceFolders.size > 0) {
+        try {
+          const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
+            'canvas-cleanup-folders',
+            {
+              body: {
+                dryRun: false,
+                targetFolders: Array.from(emptiedSourceFolders.values()),
+              },
+            },
+          );
+          if (cleanupError) throw cleanupError;
+          if ((cleanupData)?.error) throw new Error((cleanupData).error);
+          const deleted = (cleanupData)?.summary?.foldersDeleted ?? 0;
+          if (deleted > 0) {
+            toast.info(`Auto-cleanup: Deleted ${deleted} emptied source folder(s)`);
+          }
+        } catch (e: any) {
+          toast.warning('Auto-cleanup failed', { description: e?.message ?? String(e) });
+        }
+      }
+
+      if (cleanupUntitled && succeededIds.size > 0) {
+        try {
+          const hasUntitledScanSource = rows.some((row) => {
+            if (!succeededIds.has(row.canvas_file_id)) return false;
+            const nameParts = (row.original_name ?? '').split('/');
+            const firstSegment = (nameParts.length > 1 ? nameParts[0] : row.ai_suggested_folder ?? '').trim();
+            return firstSegment.length > 0 && UNTITLED_SCAN_PATTERN.test(firstSegment);
+          });
+
+          if (hasUntitledScanSource) {
+            const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
+              'canvas-cleanup-folders',
+              { body: { dryRun: false } },
+            );
+            if (cleanupError) throw cleanupError;
+            if ((cleanupData)?.error) throw new Error((cleanupData).error);
+            const deleted = (cleanupData)?.summary?.foldersDeleted ?? 0;
+            if (deleted > 0) {
+              toast.info(`Extra cleanup: Deleted ${deleted} empty folder(s) matching Untitled/Scan`);
+            }
+          }
+        } catch (e: any) {
+          toast.warning('Extra cleanup failed', { description: e?.message ?? String(e) });
+        }
+      }
+
+      if (failedIds.size > 0) {
+        toast.warning('Mass organization completed with failures', {
+          description: `${succeededIds.size} applied, ${failedIds.size} marked "Failed - Manual Intervention Needed"`,
+        });
+      } else {
+        toast.success('Mass organization complete', {
+          description: `${succeededIds.size} file(s) renamed & moved`,
+        });
+      }
+    } catch (e: any) {
+      toast.error('Mass organization failed', { description: e?.message ?? String(e) });
+    } finally {
+      setMassOrganizing(false);
+      setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
+    }
+  }, [cleanupUntitled, isDryRun, logMapperDryRunChanges, mapperRows, updateMapperRowField]);
+
+
   const loadBatchProgress = useCallback(async () => {
     const { data: job } = await supabase
       .from('automation_jobs')
@@ -617,14 +911,14 @@ export default function FileOrganizerPage() {
   }, []);
 
   useEffect(() => {
-    loadFiles();
-    loadBatchProgress();
-    loadCourseOptions();
+    void loadFiles();
+    void loadBatchProgress();
+    void loadCourseOptions();
   }, [loadBatchProgress, loadCourseOptions, loadFiles]);
 
   useEffect(() => {
     if (mapperCourseId) {
-      loadMapperRows();
+      void loadMapperRows();
     }
   }, [loadMapperRows, mapperCourseId]);
 
@@ -685,11 +979,11 @@ export default function FileOrganizerPage() {
         body: { canvasFileId: selected.canvas_file_id },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const suggested = (data as any)?.suggested_name ?? '';
-      const lessonRef = (data as any)?.ai_lesson_ref ?? '';
-      const suggestedFolder = (data as any)?.suggestedFolder ?? (data as any)?.ai_suggested_folder ?? null;
+      const suggested = (data)?.suggested_name ?? '';
+      const lessonRef = (data)?.ai_lesson_ref ?? '';
+      const suggestedFolder = (data)?.suggestedFolder ?? (data)?.ai_suggested_folder ?? null;
       setEditName(suggested);
       setEditLessonRef(lessonRef);
       setFiles((prev) =>
@@ -721,9 +1015,9 @@ export default function FileOrganizerPage() {
         body: { batchSize: 25 },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       setBatchProgress({
         filesProcessed: result.filesProcessed ?? 0,
         filesTotal: result.filesTotal ?? 0,
@@ -776,7 +1070,7 @@ export default function FileOrganizerPage() {
         body: { fileId: selected.canvas_file_id },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
       setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
@@ -796,9 +1090,9 @@ export default function FileOrganizerPage() {
         body: { deleteDuplicates: false },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Found ${result.duplicatesFound} duplicate(s)`, {
         description: 'Duplicate files are now highlighted in red.',
       });
@@ -823,9 +1117,9 @@ export default function FileOrganizerPage() {
         body: { deleteDuplicates: true },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Deleted ${result.duplicatesDeleted} duplicate(s)`, {
         description: 'Canonical versions have been preserved.',
       });
@@ -845,9 +1139,9 @@ export default function FileOrganizerPage() {
         body: { dryRun: false },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if ((data)?.error) throw new Error((data).error);
 
-      const result = data as any;
+      const result = data;
       toast.success(`Cleaned ${result.summary?.foldersDeleted ?? 0} empty folder(s)`, {
         description: `Scanned ${result.summary?.coursesScanned ?? 0} course(s)`,
       });
@@ -857,6 +1151,139 @@ export default function FileOrganizerPage() {
       setCleaningFolders(false);
     }
   };
+
+  const handleScanAllCourses = useCallback(async () => {
+    if (canvasCourseIds.length === 0) {
+      toast.error('No course IDs configured');
+      return;
+    }
+
+    setGlobalSweepRunning(true);
+    setGlobalSweepProgress({
+      current: 0,
+      total: canvasCourseIds.length,
+      label: '',
+      scanned: 0,
+      upserted: 0,
+      failedCourses: 0,
+    });
+
+    let scanned = 0;
+    let upserted = 0;
+    let failedCourses = 0;
+
+    try {
+      for (let i = 0; i < canvasCourseIds.length; i += 1) {
+        const courseId = canvasCourseIds[i];
+        const courseLabel = courseLabelById.get(courseId) ?? `Course ${courseId}`;
+
+        setGlobalSweepProgress({
+          current: i + 1,
+          total: canvasCourseIds.length,
+          label: courseLabel,
+          scanned,
+          upserted,
+          failedCourses,
+        });
+        await sleep(0);
+
+        try {
+          const parsedCourseId = Number.parseInt(courseId, 10);
+          if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+            throw new Error(`Invalid course ID: ${courseId}`);
+          }
+          const { data, error } = await supabase.functions.invoke('canvas-read-files', {
+            body: { courseId: parsedCourseId },
+          });
+          if (error) throw error;
+
+          const result = (data as CanvasReadFilesResponse | null)?.results?.find(
+            (entry) => String(entry.courseId ?? '') === String(parsedCourseId),
+          );
+          const courseFiles = result?.files ?? [];
+          scanned += courseFiles.length;
+
+          if (courseFiles.length > 0) {
+            const fileIds = courseFiles.map((file) => String(file.id));
+            const { data: existingRows, error: existingError } = await supabase
+              .from('canvas_orphan_files')
+              .select('canvas_file_id,status')
+              .in('canvas_file_id', fileIds);
+            if (existingError) throw existingError;
+            const statusById = new Map(
+              (existingRows ?? []).map((row) => [String(row.canvas_file_id), String(row.status ?? 'PENDING')]),
+            );
+            const rows = courseFiles.map((file) => ({
+              canvas_file_id: String(file.id),
+              course_id: String(parsedCourseId),
+              original_name: file.display_name ?? file.filename ?? null,
+              canvas_url: file.url ?? null,
+              status: statusById.get(String(file.id)) ?? 'PENDING',
+            }));
+
+            const { error: upsertError } = await supabase
+              .from('canvas_orphan_files')
+              .upsert(rows, { onConflict: 'canvas_file_id' });
+            if (upsertError) throw upsertError;
+            upserted += rows.length;
+          }
+        } catch (e) {
+          failedCourses += 1;
+          console.warn('Global registry sweep course failed', { courseId, error: e });
+        }
+
+        setGlobalSweepProgress({
+          current: i + 1,
+          total: canvasCourseIds.length,
+          label: courseLabel,
+          scanned,
+          upserted,
+          failedCourses,
+        });
+        await sleep(0);
+      }
+
+      if (failedCourses > 0) {
+        toast.warning('Global Registry Sweep completed with errors', {
+          description: `${upserted} file(s) upserted from ${canvasCourseIds.length - failedCourses}/${canvasCourseIds.length} course(s)`,
+        });
+      } else {
+        toast.success('Global Registry Sweep complete', {
+          description: `${upserted} file(s) upserted across ${canvasCourseIds.length} course(s)`,
+        });
+      }
+      await loadFiles();
+      if (mapperCourseId) {
+        await loadMapperRows();
+      }
+    } finally {
+      setGlobalSweepRunning(false);
+    }
+  }, [canvasCourseIds, courseLabelById, loadFiles, loadMapperRows, mapperCourseId]);
+
+  const handleRunSmartWorkflow = useCallback(async () => {
+    if (smartWorkflowRunning) return;
+    setSmartWorkflowRunning(true);
+    try {
+      setSmartWorkflowStep('Scanning all courses');
+      await handleScanAllCourses();
+
+      setSmartWorkflowStep('Mapping all pending files');
+      await mapAllCoursesSequentially();
+
+      setSmartWorkflowStep('Detecting duplicates');
+      await handleDetectDuplicates();
+
+      toast.success('Smart workflow complete', {
+        description: 'Scan, map, and duplicate detection finished.',
+      });
+    } catch (e: any) {
+      toast.error('Smart workflow failed', { description: e?.message ?? String(e) });
+    } finally {
+      setSmartWorkflowRunning(false);
+      setSmartWorkflowStep('');
+    }
+  }, [handleDetectDuplicates, handleScanAllCourses, mapAllCoursesSequentially, smartWorkflowRunning]);
 
   const duplicateCount = files.filter((f) => f.is_duplicate).length;
   const progressPct =
@@ -1262,7 +1689,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={loadMapperRows}
-                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting}
+                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperLoading ? (
@@ -1274,7 +1701,7 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   onClick={mapCourseSequentially}
-                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || mapperRows.length === 0}
+                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1287,7 +1714,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={mapAllCoursesSequentially}
-                  disabled={mapperRunning || mapperExecuting || mapperLoading}
+                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1298,9 +1725,39 @@ export default function FileOrganizerPage() {
                   Map ALL Courses
                 </Button>
                 <Button
+                  variant="outline"
+                  onClick={handleScanAllCourses}
+                  disabled={
+                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning
+                  }
+                  className="gap-1.5"
+                >
+                  {globalSweepRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Layers className="h-3.5 w-3.5" />
+                  )}
+                  {globalSweepRunning ? 'Scanning…' : 'Scan All Courses'}
+                </Button>
+                <Button
+                  variant="default"
+                  onClick={handleRunSmartWorkflow}
+                  disabled={
+                    smartWorkflowRunning || globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                  }
+                  className="gap-1.5"
+                >
+                  {smartWorkflowRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {smartWorkflowRunning ? 'Running Smart Workflow…' : 'Run Smart Workflow'}
+                </Button>
+                <Button
                   variant="default"
                   onClick={executeMapperBulk}
-                  disabled={mapperExecuting || mapperRunning || mapperRows.length === 0}
+                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperExecuting ? (
@@ -1310,6 +1767,30 @@ export default function FileOrganizerPage() {
                   )}
                   Execute Rename & Move
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={handleExecuteMassOrganization}
+                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0 || smartWorkflowRunning}
+                  className="gap-1.5"
+                >
+                  {massOrganizing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {massOrganizing ? 'Organizing…' : 'Safe Execute (Mass Organize)'}
+                </Button>
+                <div className="flex items-center gap-2 ml-1 mb-1">
+                  <Switch
+                    id="cleanup-untitled"
+                    checked={cleanupUntitled}
+                    onCheckedChange={setCleanupUntitled}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning}
+                  />
+                  <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
+                    Also clean other empty Untitled/Scan folders
+                  </Label>
+                </div>
               </div>
 
               {mapperProgress.total > 0 && (
@@ -1346,6 +1827,103 @@ export default function FileOrganizerPage() {
                   )}
                 </div>
               )}
+              {globalSweepProgress && (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">
+                    {globalSweepRunning
+                      ? `Scanning Course ${globalSweepProgress.current} of ${globalSweepProgress.total}...`
+                      : `Scanned ${globalSweepProgress.current} of ${globalSweepProgress.total} course(s)`}
+                    {globalSweepProgress.label ? ` · ${globalSweepProgress.label}` : ''}
+                  </p>
+                  <Progress
+                    value={
+                      globalSweepProgress.total > 0
+                        ? Math.round((globalSweepProgress.current / globalSweepProgress.total) * 100)
+                        : 0
+                    }
+                    className="h-2 max-w-lg"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {globalSweepProgress.upserted} file(s) upserted · {globalSweepProgress.scanned} scanned
+                    {globalSweepProgress.failedCourses > 0
+                      ? ` · ${globalSweepProgress.failedCourses} course(s) failed`
+                      : ''}
+                  </p>
+                </div>
+              )}
+              {smartWorkflowRunning && (
+                <p className="text-xs text-muted-foreground">
+                  Smart workflow step: {smartWorkflowStep || 'Preparing…'}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Strategy Preview</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Review Current Path vs Proposed Path before writing any moves to Canvas.
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  {strategyPreviewRows.filter((row) => row.changed).length} change
+                  {strategyPreviewRows.filter((row) => row.changed).length !== 1 ? 's' : ''}
+                </Badge>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Current Path</TableHead>
+                      <TableHead>Proposed Path</TableHead>
+                      <TableHead className="w-[120px]">Confidence</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {strategyPreviewRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center py-6 text-xs text-muted-foreground">
+                          Load course files to preview strategy.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      strategyPreviewRows.map((row) => (
+                        <TableRow key={`preview-${row.fileId}`}>
+                          <TableCell className="font-mono text-xs break-all">{row.currentPath}</TableCell>
+                          <TableCell className="font-mono text-xs break-all">
+                            <div className="flex items-center gap-2">
+                              <span>{row.proposedPath}</span>
+                              {!row.changed && (
+                                <Badge variant="outline" className="text-[9px]">
+                                  unchanged
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              {row.confidence !== null ? (
+                                <span className="text-xs tabular-nums">{row.confidence}%</span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                              {row.needsReview && (
+                                <Badge variant="destructive" className="text-[9px] gap-1">
+                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                  Needs Review
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1393,9 +1971,11 @@ export default function FileOrganizerPage() {
                               className={
                                 collisionIds.has(row.canvas_file_id)
                                   ? 'bg-red-50/70'
+                                  : row.status === 'FAILED'
+                                  ? 'bg-destructive/5 border-l-2 border-l-destructive'
                                   : String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
-                                    ? 'bg-amber-50/70'
-                                    : undefined
+                                  ? 'bg-amber-50/70'
+                                  : undefined
                               }
                             >
                               <TableCell className="max-w-[260px]">
@@ -1464,25 +2044,31 @@ export default function FileOrganizerPage() {
                                     <AlertTriangle className="h-2.5 w-2.5" />
                                     Collision Detected
                                   </Badge>
+                                ) : row.status === 'FAILED' ? (
+                                  <Badge variant="destructive" className="text-[10px] gap-1">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    Failed – Manual Intervention Needed
+                                  </Badge>
                                 ) : (
-                                <Button
-                                  size="sm"
-                                  onClick={() => executeMapperRow(row, mapperRows)}
-                                  disabled={
-                                    mapperRunning ||
-                                    mapperExecuting ||
-                                    rowExecutingId === row.canvas_file_id ||
-                                    !row.ai_suggested_name?.trim()
-                                  }
-                                  className="gap-1.5"
-                                >
-                                  {rowExecutingId === row.canvas_file_id ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <CheckCircle2 className="h-3.5 w-3.5" />
-                                  )}
-                                  Apply to Canvas
-                                </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => executeMapperRow(row, mapperRows)}
+                                    disabled={
+                                      mapperRunning ||
+                                      mapperExecuting ||
+                                      massOrganizing ||
+                                      rowExecutingId === row.canvas_file_id ||
+                                      !row.ai_suggested_name?.trim()
+                                    }
+                                    className="gap-1.5"
+                                  >
+                                    {rowExecutingId === row.canvas_file_id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                    )}
+                                    Apply to Canvas
+                                  </Button>
                                 )}
                               </TableCell>
                             </TableRow>

@@ -79,7 +79,7 @@ export default function MemoryPage() {
   };
 
   useEffect(() => {
-    loadAll();
+    void loadAll();
   }, []);
 
   // ── Learned Patterns ─────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ export default function MemoryPage() {
     const { error } = await supabase.from('teacher_memory').delete().eq('id', id);
     if (error) return toast.error('Forget failed: ' + error.message);
     toast.success('Memory forgotten');
-    loadAll();
+    void loadAll();
   };
 
   const openEdit = (row: MemoryRow) => {
@@ -110,7 +110,7 @@ export default function MemoryPage() {
     if (error) return toast.error('Save failed: ' + error.message);
     toast.success('Memory updated');
     setEditing(null);
-    loadAll();
+    void loadAll();
   };
 
   const groupedMemories = useMemo(() => {
@@ -133,13 +133,13 @@ export default function MemoryPage() {
     if (error) return toast.error('Promote failed: ' + error.message);
     await supabase.from('teacher_patterns').delete().eq('id', p.id);
     toast.success('Pattern promoted to memory');
-    loadAll();
+    void loadAll();
   };
 
   const rejectPattern = async (id: string) => {
     await supabase.from('teacher_patterns').delete().eq('id', id);
     toast.success('Pattern rejected');
-    loadAll();
+    void loadAll();
   };
 
   // ── Deploy Habits heatmap ────────────────────────────────────────────────
@@ -291,7 +291,7 @@ export default function MemoryPage() {
                       <>
                         <TableRow key={f.id} className="cursor-pointer" onClick={() => {
                           const next = new Set(expandedFeedback);
-                          next.has(f.id) ? next.delete(f.id) : next.add(f.id);
+                          if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
                           setExpandedFeedback(next);
                         }}>
                           <TableCell className="text-xs">{new Date(f.created_at).toLocaleString()}</TableCell>

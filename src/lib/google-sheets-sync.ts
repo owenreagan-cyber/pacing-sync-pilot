@@ -5,7 +5,7 @@
  * to the annual_pacing_master format with abbreviation normalization.
  */
 
-import { normalizePacingEntry, expandType } from './pacing-abbreviations';
+import { normalizePacingEntry } from './pacing-abbreviations';
 
 interface MasterCell {
   school_year: string;
@@ -187,6 +187,6 @@ export async function fetchGoogleSheetsPacing(
  * Parse CSV text directly (useful for pasted data)
  */
 export function parseGoogleSheetsCsv(csvText: string, schoolYear: string): MasterCell[] {
-  let cells = parseCsvData(csvText);
+  const cells = parseCsvData(csvText);
   return cells.map(c => ({ ...c, school_year: schoolYear }));
 }

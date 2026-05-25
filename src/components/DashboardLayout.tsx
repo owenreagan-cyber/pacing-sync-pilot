@@ -40,8 +40,8 @@ export function DashboardLayout({
   const { systemStatus, fetchHealthCheck } = useSystemStore();
 
   useEffect(() => {
-    fetchHealthCheck();
-    const interval = setInterval(fetchHealthCheck, 60_000);
+    void fetchHealthCheck();
+    const interval = setInterval(() => { void fetchHealthCheck(); }, 60_000);
     return () => clearInterval(interval);
   }, [fetchHealthCheck]);
 

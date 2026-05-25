@@ -103,8 +103,8 @@ describe('FPK compliance', () => {
     ).toBe(true);
   });
 
-  it("LA CP title is 'ELA4: Shurley English Classroom Practice 52'", () => {
-    expect(generateAssignmentTitle('Language Arts', 'CP', '52', 'ELA4:')).toBe('ELA4: Shurley English Classroom Practice 52');
+  it("LA CP title is 'ELA4: 4A - Shurley English Classroom Practice 52'", () => {
+    expect(generateAssignmentTitle('Language Arts', 'CP', '52', 'ELA4:')).toBe('ELA4: 4A - Shurley English Classroom Practice 52');
   });
 
   it("Config fallback prefix for Math is 'SM5:' with colon", async () => {

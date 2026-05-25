@@ -1,4 +1,4 @@
-/* eslint-disable */
+ 
 import AnnouncementCenterPage from '@/pages/AnnouncementCenterPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 

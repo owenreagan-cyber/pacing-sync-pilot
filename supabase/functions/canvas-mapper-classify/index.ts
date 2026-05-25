@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const SNIPPET_MAX_CHARS = 300;
 
 const classifyTool = {
   type: "function" as const,
@@ -18,11 +19,15 @@ const classifyTool = {
       properties: {
         resourceType: { type: "string" },
         purpose: { type: "array", items: { type: "string" } },
-        snippet: { type: "string", description: "First 200 chars summary/snippet from file content" },
+        snippet: { type: "string", description: "First 300 chars summary/snippet from file content" },
         suggestedName: { type: "string" },
         suggestedFolder: { type: "string" },
+        confidence: {
+          type: "integer",
+          description: "Classification confidence score 0–100. Use 100 when certain, lower when ambiguous.",
+        },
       },
-      required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder"],
+      required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder", "confidence"],
       additionalProperties: false,
     },
   },
@@ -34,7 +39,98 @@ interface MapperResult {
   snippet: string;
   suggestedName: string;
   suggestedFolder: string;
+  confidence: number;
   alreadyFormatted?: boolean;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const hashBuf = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hashBuf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function tokenSet(input: string): Set<string> {
+  const tokens = input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 2);
+  return new Set(tokens);
+}
+
+function textSimilarity(a: string, b: string): number {
+  const setA = tokenSet(a);
+  const setB = tokenSet(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection += 1;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+interface DuplicateMatchResult {
+  isDuplicate: boolean;
+  canonicalFileId: string | null;
+}
+
+async function detectDuplicateMatch(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  orphan: { canvas_file_id: string; course_id: string | null },
+  fileHash: string,
+  snippet: string,
+): Promise<DuplicateMatchResult> {
+  const { data: exactMatches } = await supabase
+    .from("canvas_orphan_files")
+    .select("canvas_file_id, created_at")
+    .eq("file_hash", fileHash)
+    .neq("canvas_file_id", orphan.canvas_file_id)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (Array.isArray(exactMatches) && exactMatches.length > 0) {
+    return { isDuplicate: true, canonicalFileId: String(exactMatches[0].canvas_file_id) };
+  }
+
+  if (!snippet || snippet.length < 40) {
+    return { isDuplicate: false, canonicalFileId: null };
+  }
+
+  let nearDupQuery = supabase
+    .from("canvas_orphan_files")
+    .select("canvas_file_id, ai_snippet, created_at")
+    .neq("canvas_file_id", orphan.canvas_file_id)
+    .not("ai_snippet", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(200);
+
+  if (orphan.course_id) {
+    nearDupQuery = nearDupQuery.eq("course_id", orphan.course_id);
+  }
+
+  const { data: nearCandidates } = await nearDupQuery;
+  let bestMatchId: string | null = null;
+  let bestSimilarity = 0;
+  for (const candidate of nearCandidates ?? []) {
+    const similarity = textSimilarity(
+      normalizeSnippetText(String(candidate.ai_snippet ?? ""), SNIPPET_MAX_CHARS),
+      snippet,
+    );
+    if (similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatchId = String(candidate.canvas_file_id);
+    }
+  }
+
+  if (bestMatchId && bestSimilarity >= 0.92) {
+    return { isDuplicate: true, canonicalFileId: bestMatchId };
+  }
+
+  return { isDuplicate: false, canonicalFileId: null };
 }
 
 const mapperResponseSchema = {
@@ -48,8 +144,9 @@ const mapperResponseSchema = {
       snippet: { type: "string" },
       suggestedName: { type: "string" },
       suggestedFolder: { type: "string" },
+      confidence: { type: "integer" },
     },
-    required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder"],
+    required: ["resourceType", "purpose", "snippet", "suggestedName", "suggestedFolder", "confidence"],
     additionalProperties: false,
   },
 } as const;
@@ -61,6 +158,43 @@ function mimeFromName(name: string): string {
   if (ext === "webp") return "image/webp";
   if (ext === "gif") return "image/gif";
   return "image/png";
+}
+
+async function shouldChunkCourseLessons(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  courseId: string | null,
+  currentFileSource: string,
+): Promise<boolean> {
+  if (!courseId) return false;
+
+  const { data: courseRows } = await supabase
+    .from("canvas_orphan_files")
+    .select("original_name, ai_suggested_name, ai_lesson_ref")
+    .eq("course_id", courseId)
+    .limit(1000);
+
+  let maxLesson = 0;
+  let lessonFileCount = 0;
+  for (const row of courseRows ?? []) {
+    const source = `${row.original_name ?? ""} ${row.ai_suggested_name ?? ""} ${row.ai_lesson_ref ?? ""}`.trim();
+    const lessonNum = parseLessonNumber(source);
+    if (lessonNum) {
+      lessonFileCount += 1;
+      if (lessonNum > maxLesson) {
+        maxLesson = lessonNum;
+      }
+    }
+  }
+
+  const currentLesson = parseLessonNumber(currentFileSource);
+  if (currentLesson && currentLesson > maxLesson) {
+    maxLesson = currentLesson;
+    lessonFileCount += 1;
+  }
+  // Apply Rule of 20: chunk if more than 20 lesson-type files exist in the course,
+  // or if the max lesson number itself exceeds 20.
+  return lessonFileCount > 20 || maxLesson > 20;
 }
 
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
@@ -76,10 +210,22 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
   const raw = (name || "").trim();
   if (!raw) return fallback;
   const withoutVerboseSubtitle = raw.split(" - ")[0]?.trim() || raw;
-  return withoutVerboseSubtitle;
+  const withoutDateTokens = withoutVerboseSubtitle
+    .replace(/\b(19|20)\d{2}[-_ ]?(0[1-9]|1[0-2])[-_ ]?(0[1-9]|[12]\d|3[01])\b/g, " ")
+    .replace(/\b(0[1-9]|1[0-2])[-_ ](0[1-9]|[12]\d|3[01])[-_ ]((19|20)\d{2})\b/g, " ")
+    .replace(/\b\d{8}\b/g, " ");
+  const withoutVendorTokens = withoutDateTokens.replace(
+    /\b(v\d+(?:\.\d+)*|final|draft|copy|scan(?:ned)?|ocr|vendor|export|rev\d*|ver(?:sion)?\d*)\b/gi,
+    " ",
+  );
+  const normalized = withoutVendorTokens
+    .replace(/[_-]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return normalized || fallback;
 }
 
-function normalizeSnippetText(text: string, max = 200): string {
+function normalizeSnippetText(text: string, max = SNIPPET_MAX_CHARS): string {
   return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
@@ -94,6 +240,7 @@ function fallbackNeedsReview(displayName: string, fallbackId: string, snippetOve
     snippet: safeSnippet || "No readable text extracted from file content.",
     suggestedName: safeName,
     suggestedFolder: "Needs Visual Review",
+    confidence: 0,
   };
 }
 
@@ -110,12 +257,17 @@ function toValidatedMapperResult(value: unknown): MapperResult | null {
   ) {
     return null;
   }
+  const rawConfidence = candidate.confidence;
+  const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
+    ? Math.min(100, Math.max(0, Math.round(rawConfidence)))
+    : 50;
   return {
     resourceType: candidate.resourceType.trim(),
     purpose: candidate.purpose.map((item) => item.trim()).filter(Boolean),
     snippet: normalizeSnippetText(candidate.snippet),
     suggestedName: candidate.suggestedName.trim(),
     suggestedFolder: candidate.suggestedFolder.trim(),
+    confidence,
   };
 }
 
@@ -154,7 +306,7 @@ function extractPdfSnippet(bytes: Uint8Array): string {
         }
       }
 
-      if (normalizeSnippetText(texts.join(" ")).length >= 200) break;
+      if (normalizeSnippetText(texts.join(" ")).length >= SNIPPET_MAX_CHARS) break;
     }
     return normalizeSnippetText(texts.join(" "));
   } catch {
@@ -196,11 +348,16 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   return null;
 }
 
-function applyFolderRules(result: MapperResult, originalName: string, fileContentSnippet: string): MapperResult {
+function applyFolderRules(
+  result: MapperResult,
+  originalName: string,
+  fileContentSnippet: string,
+  chunkLessonsByTen: boolean,
+): MapperResult {
   const conciseName = canonicalizeSuggestedName(result.suggestedName, originalName);
   const source = `${conciseName} ${originalName} ${fileContentSnippet}`.trim();
   const lessonNum = parseLessonNumber(source);
-  if (lessonNum && lessonNum > 20) {
+  if (lessonNum && chunkLessonsByTen) {
     const start = Math.floor((lessonNum - 1) / 10) * 10 + 1;
     const end = start + 9;
     const lower = source.toLowerCase();
@@ -266,34 +423,6 @@ Deno.serve(async (req) => {
     const displayName = String(orphan.original_name ?? "");
     const alreadyFormatted = displayName.includes(" ") && !displayName.includes("_");
 
-    if (alreadyFormatted) {
-      const mapped: MapperResult = {
-        resourceType: orphan.ai_resource_type ?? "Already Formatted",
-        purpose: orphan.ai_purpose ?? ["Already Formatted"],
-        snippet: String(orphan.ai_snippet ?? displayName).slice(0, 200),
-        suggestedName: displayName,
-        suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
-        alreadyFormatted: true,
-      };
-
-      await supabase
-        .from("canvas_orphan_files")
-        .update({
-          ai_resource_type: mapped.resourceType,
-          ai_purpose: mapped.purpose,
-          ai_snippet: mapped.snippet,
-          ai_suggested_name: mapped.suggestedName,
-          ai_suggested_folder: mapped.suggestedFolder,
-          ai_folder_chunked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("canvas_file_id", orphan.canvas_file_id);
-
-      return new Response(JSON.stringify(mapped), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     if (!orphan.canvas_url) {
       return new Response(JSON.stringify({ error: "Orphan file missing canvas_url" }), {
         status: 400,
@@ -315,117 +444,128 @@ Deno.serve(async (req) => {
     const extractedSnippet = extractFileContentSnippet(buf, mime);
     const normalizedExtractedSnippet = normalizeSnippetText(extractedSnippet);
     const fileContentSnippet = normalizedExtractedSnippet;
+    const fileHash = await sha256Hex(buf);
     const base64 = await bytesToBase64(buf);
+    const duplicateMatch = await detectDuplicateMatch(supabase, orphan, fileHash, fileContentSnippet);
 
-    if (!fileContentSnippet) {
-      const mapped = fallbackNeedsReview(
-        displayName || orphan.original_name || "",
-        orphan.canvas_file_id,
-        "No readable text extracted from file content.",
-      );
-      await supabase
-        .from("canvas_orphan_files")
-        .update({
-          ai_resource_type: mapped.resourceType,
-          ai_purpose: mapped.purpose,
-          ai_snippet: mapped.snippet,
-          ai_suggested_name: mapped.suggestedName,
-          ai_suggested_folder: mapped.suggestedFolder,
-          ai_folder_chunked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("canvas_file_id", orphan.canvas_file_id);
+    let mapped: MapperResult = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+    if (alreadyFormatted) {
+      mapped = {
+        resourceType: orphan.ai_resource_type ?? "Already Formatted",
+        purpose: orphan.ai_purpose ?? ["Already Formatted"],
+        snippet: normalizeSnippetText(String(orphan.ai_snippet ?? fileContentSnippet ?? displayName)),
+        suggestedName: displayName,
+        suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
+        confidence: 100,
+        alreadyFormatted: true,
+      };
+    } else {
+      const fileSnippet = normalizeSnippetText(fileContentSnippet).slice(0, SNIPPET_MAX_CHARS);
+      const prompt = `You are a strict academic librarian for Canvas LMS. Classify the educational file below.
 
-      return new Response(JSON.stringify(mapped), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+RULE OF 20 — FOLDER CHUNKING:
+If a course folder would contain more than 20 lesson files, you MUST split them into ten-lesson sub-folders:
+  "Lessons 1-10", "Lessons 11-20", "Lessons 21-30", etc.
+Apply this rule whenever the lesson number is known and the course likely has > 20 lessons.
 
-    const prompt = `You are a strict academic librarian for Canvas.
+SUBJECT-SPECIFIC NAMING CONVENTIONS (apply strictly):
+- Math files:             suggestedName format → "[SM5]: Lesson N"   (e.g., "[SM5]: Lesson 14")
+- Reading/Spelling files: suggestedName format → "[RM4]: Lesson N"   (e.g., "[RM4]: Lesson 7")
+- ELA files:              suggestedName format → "[ELA4]: Chapter N" (e.g., "[ELA4]: Chapter 3")
+- Other subjects: use the clearest descriptive title without subject codes.
 
 STRICT FOLDER RULES:
-1. ALWAYS group Math lessons (1-20, 21-40) into "Lessons 1-20", "Lessons 21-40".
+1. Apply Rule of 20 chunking ("Lessons 1-10", "Lessons 11-20", …) whenever lesson count > 20.
 2. ALWAYS place Investigations in "Investigations".
 3. ALWAYS place Tests/Assessments in "Assessments".
-4. If a file is a generic "Lesson", route it to the specific "Lessons X-Y" folder.
-5. IF the AI is unsure, use "Resources" as the absolute fallback.
+4. ALWAYS place Reteaching materials in "Reteaching".
+5. ALWAYS place Power Ups in "Power Ups".
+6. If unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
-- Friendly naming only (remove scanner/vendor junk codes).
-- snippet must use fileContentSnippet (<=200 chars).
-- purpose must be an array of concise category tags.
+- suggestedName: remove version numbers, dates, and vendor noise (e.g., "v2_final", "scan_export").
+- snippet: copy the file_snippet verbatim (≤300 chars).
+- purpose: array of concise category tags.
+- confidence: integer 0–100 reflecting how certain you are about the classification.
+  Use 90–100 when the subject code, lesson number and folder are all unambiguous.
+  Use 50–89 when some context is inferred.
+  Use 0–49 when the file is very ambiguous or unreadable.
 
 FILE CONTEXT:
-Original name: "${orphan.original_name ?? ""}".
-Snippet: "${fileContentSnippet}".
+original_name: "${orphan.original_name ?? ""}"
+file_snippet: "${fileSnippet}"
 
-Output MUST be a valid JSON object matching the schema.
-Use the classify_mapper_file tool.`;
+Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
 
-    const response = await fetch(AI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } },
-            ],
-          },
-        ],
-        temperature: 0.1,
-        response_format: {
-          type: "json_schema",
-          json_schema: mapperResponseSchema,
+      const response = await fetch(AI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${lovableApiKey}`,
         },
-        tools: [classifyTool],
-        tool_choice: { type: "function", function: { name: "classify_mapper_file" } },
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return new Response(JSON.stringify({ error: `AI request failed: ${errText}` }), {
-        status: response.status === 429 ? 429 : response.status === 402 ? 402 : 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } },
+              ],
+            },
+          ],
+          temperature: 0.1,
+          response_format: {
+            type: "json_schema",
+            json_schema: mapperResponseSchema,
+          },
+          tools: [classifyTool],
+          tool_choice: { type: "function", function: { name: "classify_mapper_file" } },
+        }),
       });
-    }
 
-    const aiResult = await response.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-
-    let mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
-
-    if (toolCall?.function?.arguments) {
-      try {
-        const parsed = JSON.parse(toolCall.function.arguments);
-        const validated = toValidatedMapperResult(parsed);
-        if (validated) {
-          mapped = validated;
-        }
-      } catch {
-        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      if (!response.ok) {
+        const errText = await response.text();
+        return new Response(JSON.stringify({ error: `AI request failed: ${errText}` }), {
+          status: response.status === 429 ? 429 : response.status === 402 ? 402 : 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-    } else {
-      try {
-        const content = aiResult?.choices?.[0]?.message?.content;
-        if (typeof content === "string" && content.trim()) {
-          const parsed = JSON.parse(content);
+
+      const aiResult = await response.json();
+      const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
+
+      if (toolCall?.function?.arguments) {
+        try {
+          const parsed = JSON.parse(toolCall.function.arguments);
           const validated = toValidatedMapperResult(parsed);
           if (validated) {
             mapped = validated;
           }
+        } catch {
+          mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
         }
-      } catch {
-        mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+      } else {
+        try {
+          const content = aiResult?.choices?.[0]?.message?.content;
+          if (typeof content === "string" && content.trim()) {
+            const parsed = JSON.parse(content);
+            const validated = toValidatedMapperResult(parsed);
+            if (validated) {
+              mapped = validated;
+            }
+          }
+        } catch {
+          mapped = fallbackNeedsReview(displayName, orphan.canvas_file_id, fileContentSnippet);
+        }
       }
     }
+
+    const shouldChunkLessons = await shouldChunkCourseLessons(
+      supabase,
+      orphan.course_id ? String(orphan.course_id) : null,
+      `${mapped.suggestedName} ${displayName} ${fileContentSnippet}`,
+    );
 
     mapped = applyFolderRules(
       {
@@ -437,7 +577,16 @@ Use the classify_mapper_file tool.`;
       },
       displayName || orphan.canvas_file_id,
       fileContentSnippet,
+      shouldChunkLessons,
     );
+
+    if (duplicateMatch.isDuplicate) {
+      mapped = {
+        ...mapped,
+        purpose: Array.from(new Set([...(mapped.purpose ?? []), "DUPLICATE"])),
+        suggestedFolder: "DUPLICATE",
+      };
+    }
 
     const aiFolderChunked = /\d+\s*-\s*\d+/.test(mapped.suggestedFolder);
 
@@ -450,11 +599,20 @@ Use the classify_mapper_file tool.`;
         ai_suggested_name: mapped.suggestedName,
         ai_suggested_folder: mapped.suggestedFolder,
         ai_folder_chunked: aiFolderChunked,
+        ai_confidence: mapped.confidence,
+        file_hash: fileHash,
+        is_duplicate: duplicateMatch.isDuplicate,
+        canonical_file_id: duplicateMatch.canonicalFileId,
         updated_at: new Date().toISOString(),
       })
       .eq("canvas_file_id", orphan.canvas_file_id);
 
-    return new Response(JSON.stringify(mapped), {
+    return new Response(JSON.stringify({
+      ...mapped,
+      fileHash,
+      isDuplicate: duplicateMatch.isDuplicate,
+      canonicalFileId: duplicateMatch.canonicalFileId,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

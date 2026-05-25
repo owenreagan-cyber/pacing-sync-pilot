@@ -121,7 +121,7 @@ function buildSavedPacingData(
   return { dates, subjects };
 }
 
-export const useSystemStore = create<SystemState>((set, get) => ({
+export const useSystemStore = create<SystemState>((set, _get) => ({
   selectedMonth: '',
   selectedWeek: 0,
   pacingData: null,
@@ -189,14 +189,14 @@ export const useSystemStore = create<SystemState>((set, get) => ({
       const payload = raw.data || raw;
 
       const dates: string[] = payload.dates || [];
-      const days: string[] = payload.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+      const _days: string[] = payload.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
       const subjects: Record<string, PacingCell[]> = {};
 
       for (const [apiKey, values] of Object.entries(payload.subjects || {})) {
         const subjectName = API_SUBJECT_MAP[apiKey] || apiKey;
         if (!Array.isArray(values)) continue;
 
-        subjects[subjectName] = (values as any[]).map((v) => {
+        subjects[subjectName] = (values).map((v) => {
           const val = String(v ?? '');
           const lower = val.toLowerCase();
           return {
