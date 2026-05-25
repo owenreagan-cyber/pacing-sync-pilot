@@ -189,8 +189,8 @@ export default function AssignmentsPage() {
 
       function toPreview(a: BuiltAssignment): PreviewRow {
         const dayIndex = DAYS.indexOf(a.day);
-        const rowKey = `${a.subject}_${dayIndex}_${a.type}_${a.lesson_num}`;
-        const dbRow = findDbRow(a.subject, dayIndex, a.type, a.lesson_num);
+        const rowKey = `${a.subject}_${dayIndex}_${a.type}_${a.lessonNum}`;
+        const dbRow = findDbRow(a.subject, dayIndex, a.type, a.lessonNum);
         let status: DeployStatus = 'NEW';
         if (dbRow) {
           const oldHash = dbRow.content_hash;
