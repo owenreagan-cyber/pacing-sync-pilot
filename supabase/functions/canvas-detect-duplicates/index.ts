@@ -1,7 +1,8 @@
 // canvas-detect-duplicates
 // Compares file_hash across canvas_orphan_files and marks duplicates.
 // Keeps earliest-created file as canonical; marks rest with is_duplicate=true.
-// Input (POST): { deleteDuplicates?: boolean }  — if true, calls Canvas API to delete them.
+// Input (POST): { deleteDuplicates?: boolean, courseId?: number|string }.
+// If courseId is provided, detection/deletion is scoped to that course only.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -28,6 +29,9 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const deleteDuplicates: boolean = body?.deleteDuplicates === true;
+    const courseIdFilter = body?.courseId !== undefined && body?.courseId !== null && String(body.courseId).trim()
+      ? String(body.courseId).trim()
+      : null;
 
     const baseUrl = (Deno.env.get("CANVAS_BASE_URL") || "").replace(/\/$/, "");
     const token = Deno.env.get("CANVAS_API_TOKEN");
@@ -38,11 +42,15 @@ Deno.serve(async (req) => {
     );
 
     // Fetch all files that have a hash computed
-    const { data: allFiles, error: fetchErr } = await supabase
+    let filesQuery = supabase
       .from("canvas_orphan_files")
       .select("canvas_file_id, course_id, original_name, canvas_url, file_hash, is_duplicate, canonical_file_id, created_at, status")
       .not("file_hash", "is", null)
       .order("created_at", { ascending: true });
+    if (courseIdFilter) {
+      filesQuery = filesQuery.eq("course_id", courseIdFilter);
+    }
+    const { data: allFiles, error: fetchErr } = await filesQuery;
 
     if (fetchErr) throw fetchErr;
 
@@ -139,6 +147,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         ok: true,
+        courseId: courseIdFilter,
         duplicatesFound,
         duplicatesDeleted,
         pairs: duplicatePairs,

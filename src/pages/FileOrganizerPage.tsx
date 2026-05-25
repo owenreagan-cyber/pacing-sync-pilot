@@ -103,7 +103,7 @@ interface CanvasReadFilesResponse {
 }
 
 const MAPPER_MAX_CONCURRENCY = 5;
-const EXECUTE_CHUNK_SIZE = 25;
+const _EXECUTE_CHUNK_SIZE = 25;
 const MASS_ORG_CHUNK_SIZE = 5;
 const PAUSE_POLL_MS = 150;
 const UNTITLED_SCAN_PATTERN = /^(untitled|scan)/i;
@@ -166,6 +166,7 @@ export default function FileOrganizerPage() {
   const [cleanupUntitled, setCleanupUntitled] = useState(false);
   const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
   const [smartWorkflowRunning, setSmartWorkflowRunning] = useState(false);
+  const [courseWorkflowRunning, setCourseWorkflowRunning] = useState(false);
   const [smartWorkflowStep, setSmartWorkflowStep] = useState<string>('');
   const [globalSweepProgress, setGlobalSweepProgress] = useState<{
     current: number;
@@ -553,7 +554,8 @@ export default function FileOrganizerPage() {
       const key = `${courseId}|${folder}|${name}`;
       if (seen.has(key)) {
         collisions.add(row.canvas_file_id);
-        collisions.add(seen.get(key)!);
+        const firstId = seen.get(key);
+        if (firstId) collisions.add(firstId);
       } else {
         seen.set(key, row.canvas_file_id);
       }
@@ -648,7 +650,7 @@ export default function FileOrganizerPage() {
           },
         });
 
-        if (!error && !(data as any)?.error) {
+        if (!error && !(data as { error?: string } | null)?.error) {
           succeededIds.add(String(row.canvas_file_id));
         }
 
@@ -1261,6 +1263,56 @@ export default function FileOrganizerPage() {
     }
   }, [canvasCourseIds, courseLabelById, loadFiles, loadMapperRows, mapperCourseId]);
 
+  const scanSingleCourse = useCallback(async (courseId: string): Promise<void> => {
+    const parsedCourseId = Number.parseInt(courseId, 10);
+    if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+      throw new Error(`Invalid course ID: ${courseId}`);
+    }
+    const { data, error } = await supabase.functions.invoke('canvas-read-files', {
+      body: { courseId: parsedCourseId },
+    });
+    if (error) throw error;
+
+    const result = (data as CanvasReadFilesResponse | null)?.results?.find(
+      (entry) => String(entry.courseId ?? '') === String(parsedCourseId),
+    );
+    const courseFiles = result?.files ?? [];
+    if (courseFiles.length === 0) return;
+
+    const fileIds = courseFiles.map((file) => String(file.id));
+    const { data: existingRows, error: existingError } = await supabase
+      .from('canvas_orphan_files')
+      .select('canvas_file_id,status')
+      .in('canvas_file_id', fileIds);
+    if (existingError) throw existingError;
+    const statusById = new Map(
+      (existingRows ?? []).map((row) => [String(row.canvas_file_id), String(row.status ?? 'PENDING')]),
+    );
+    const rows = courseFiles.map((file) => ({
+      canvas_file_id: String(file.id),
+      course_id: String(parsedCourseId),
+      original_name: file.display_name ?? file.filename ?? null,
+      canvas_url: file.url ?? null,
+      status: statusById.get(String(file.id)) ?? 'PENDING',
+    }));
+
+    const { error: upsertError } = await supabase
+      .from('canvas_orphan_files')
+      .upsert(rows, { onConflict: 'canvas_file_id' });
+    if (upsertError) throw upsertError;
+  }, []);
+
+  const loadMapperRowsForCourse = useCallback(async (courseId: string): Promise<OrphanFile[]> => {
+    const { data, error } = await supabase
+      .from('canvas_orphan_files')
+      .select('*')
+      .eq('status', 'PENDING')
+      .eq('course_id', courseId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as OrphanFile[];
+  }, []);
+
   const handleRunSmartWorkflow = useCallback(async () => {
     if (smartWorkflowRunning) return;
     setSmartWorkflowRunning(true);
@@ -1284,6 +1336,185 @@ export default function FileOrganizerPage() {
       setSmartWorkflowStep('');
     }
   }, [handleDetectDuplicates, handleScanAllCourses, mapAllCoursesSequentially, smartWorkflowRunning]);
+
+  const runCourseExecuteSequential = useCallback(async (rows: OrphanFile[], courseId: string) => {
+    if (rows.length === 0) return;
+    const collisions = detectNameCollisions(rows);
+    setCollisionIds(collisions);
+    const executableRows = rows.filter((row) => !collisions.has(row.canvas_file_id));
+    if (executableRows.length === 0) {
+      throw new Error('All files in this course have name collisions; resolve them before live execution.');
+    }
+
+    const succeededIds = new Set<string>();
+    const failedRows: Array<{ fileId: string; error: string }> = [];
+    const emptiedSourceFolders = new Map<string, { courseId: number; folderId: number; folderName: string }>();
+
+    setMassOrganizing(true);
+    setMapperProgressLabel('Live execute (selected course)');
+    setMapperProgress({ current: 0, total: executableRows.length });
+    try {
+      for (let i = 0; i < executableRows.length; i += 1) {
+        const row = executableRows[i];
+        const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
+          body: {
+            fileId: row.canvas_file_id,
+            suggestedName: row.ai_suggested_name,
+            suggestedFolder: row.ai_suggested_folder,
+          },
+        });
+        if (error) {
+          failedRows.push({ fileId: row.canvas_file_id, error: error.message });
+        } else {
+          const result = (data as {
+            results?: Array<{
+              ok: boolean;
+              error?: string;
+              sourceFolder?: {
+                courseId: number | null;
+                folderId: number;
+                fullName: string;
+                parentFolderId: number | null;
+                isEmpty: boolean;
+              } | null;
+            }>;
+          })?.results?.[0];
+          if (!result?.ok) {
+            failedRows.push({ fileId: row.canvas_file_id, error: result?.error ?? 'Canvas execution failed' });
+          } else {
+            succeededIds.add(row.canvas_file_id);
+            if (
+              result.sourceFolder?.isEmpty &&
+              result.sourceFolder.courseId !== null &&
+              result.sourceFolder.parentFolderId !== null
+            ) {
+              emptiedSourceFolders.set(
+                `${result.sourceFolder.courseId}:${result.sourceFolder.folderId}`,
+                {
+                  courseId: result.sourceFolder.courseId,
+                  folderId: result.sourceFolder.folderId,
+                  folderName: result.sourceFolder.fullName,
+                },
+              );
+            }
+          }
+        }
+        setMapperProgress({ current: i + 1, total: executableRows.length });
+        if (i < executableRows.length - 1) await sleep(350);
+      }
+
+      if (emptiedSourceFolders.size > 0) {
+        const { data, error } = await supabase.functions.invoke('canvas-cleanup-folders', {
+          body: {
+            dryRun: false,
+            courseId,
+            targetFolders: Array.from(emptiedSourceFolders.values()),
+          },
+        });
+        if (error) throw error;
+        if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error);
+      }
+
+      if (succeededIds.size > 0) {
+        setMapperRows((prev) => prev.filter((row) => !succeededIds.has(row.canvas_file_id)));
+        setFiles((prev) => prev.filter((row) => !succeededIds.has(row.canvas_file_id)));
+      }
+      for (const failed of failedRows) {
+        await supabase
+          .from('canvas_orphan_files')
+          .update({ status: 'FAILED', updated_at: new Date().toISOString() })
+          .eq('canvas_file_id', failed.fileId);
+      }
+      if (failedRows.length > 0) {
+        throw new Error(`${failedRows.length} file(s) failed during live execution.`);
+      }
+    } finally {
+      setMassOrganizing(false);
+      setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
+    }
+  }, [detectNameCollisions]);
+
+  const handleRunSelectedCourseLiveWorkflow = useCallback(async () => {
+    if (courseWorkflowRunning) return;
+    if (!mapperCourseId) {
+      toast.error('Select a course first');
+      return;
+    }
+    if (isDryRun) {
+      toast.error('Disable Dry Run before executing a live course workflow');
+      return;
+    }
+
+    const courseLabel = courseLabelById.get(mapperCourseId) ?? `Course ${mapperCourseId}`;
+    setCourseWorkflowRunning(true);
+    setSmartWorkflowStep('');
+    try {
+      setSmartWorkflowStep(`Scanning ${courseLabel}`);
+      await scanSingleCourse(mapperCourseId);
+
+      setSmartWorkflowStep(`Loading pending files for ${courseLabel}`);
+      const pendingRows = await loadMapperRowsForCourse(mapperCourseId);
+      setMapperRows(pendingRows);
+      if (pendingRows.length === 0) {
+        toast.success(`${courseLabel}: nothing to process`);
+        await loadFiles();
+        return;
+      }
+
+      setSmartWorkflowStep(`Mapping ${courseLabel}`);
+      await runMapperSequentially(pendingRows, `${courseLabel} mapping complete`);
+
+      setSmartWorkflowStep(`Reloading mapped files for ${courseLabel}`);
+      const mappedRows = await loadMapperRowsForCourse(mapperCourseId);
+      setMapperRows(mappedRows);
+
+      setSmartWorkflowStep(`Executing live rename & move for ${courseLabel}`);
+      await runCourseExecuteSequential(mappedRows, mapperCourseId);
+
+      setSmartWorkflowStep(`Detecting duplicates in ${courseLabel}`);
+      const { data: dedupeResult, error: dedupeError } = await supabase.functions.invoke('canvas-detect-duplicates', {
+        body: { courseId: mapperCourseId, deleteDuplicates: false },
+      });
+      if (dedupeError) throw dedupeError;
+      const duplicatesFound = Number((dedupeResult as { duplicatesFound?: number } | null)?.duplicatesFound ?? 0);
+      if (duplicatesFound > 0) {
+        setSmartWorkflowStep(`Deleting duplicates in ${courseLabel}`);
+        const { error: deleteError } = await supabase.functions.invoke('canvas-detect-duplicates', {
+          body: { courseId: mapperCourseId, deleteDuplicates: true },
+        });
+        if (deleteError) throw deleteError;
+      }
+
+      setSmartWorkflowStep(`Cleaning empty folders in ${courseLabel}`);
+      const { error: cleanupError } = await supabase.functions.invoke('canvas-cleanup-folders', {
+        body: { dryRun: false, courseId: mapperCourseId },
+      });
+      if (cleanupError) throw cleanupError;
+
+      await loadFiles();
+      await loadMapperRows();
+      toast.success(`${courseLabel}: live workflow complete`, {
+        description: `Processed one course safely with scan → map → execute → dedupe → cleanup.`,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error('Selected-course live workflow failed', { description: msg });
+    } finally {
+      setCourseWorkflowRunning(false);
+      setSmartWorkflowStep('');
+    }
+  }, [
+    courseWorkflowRunning,
+    mapperCourseId,
+    isDryRun,
+    courseLabelById,
+    scanSingleCourse,
+    loadMapperRowsForCourse,
+    runMapperSequentially,
+    runCourseExecuteSequential,
+    loadFiles,
+    loadMapperRows,
+  ]);
 
   const duplicateCount = files.filter((f) => f.is_duplicate).length;
   const progressPct =
@@ -1689,7 +1920,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={loadMapperRows}
-                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting || smartWorkflowRunning}
+                  disabled={!mapperCourseId || mapperLoading || mapperRunning || mapperExecuting || smartWorkflowRunning || courseWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperLoading ? (
@@ -1701,7 +1932,7 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   onClick={mapCourseSequentially}
-                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
+                  disabled={!mapperCourseId || mapperRunning || mapperExecuting || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning || courseWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1714,7 +1945,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="outline"
                   onClick={mapAllCoursesSequentially}
-                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning}
+                  disabled={mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning || courseWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperRunning ? (
@@ -1728,7 +1959,7 @@ export default function FileOrganizerPage() {
                   variant="outline"
                   onClick={handleScanAllCourses}
                   disabled={
-                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning
+                    globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading || smartWorkflowRunning || courseWorkflowRunning
                   }
                   className="gap-1.5"
                 >
@@ -1743,7 +1974,7 @@ export default function FileOrganizerPage() {
                   variant="default"
                   onClick={handleRunSmartWorkflow}
                   disabled={
-                    smartWorkflowRunning || globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                    smartWorkflowRunning || courseWorkflowRunning || globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
                   }
                   className="gap-1.5"
                 >
@@ -1756,8 +1987,23 @@ export default function FileOrganizerPage() {
                 </Button>
                 <Button
                   variant="default"
+                  onClick={handleRunSelectedCourseLiveWorkflow}
+                  disabled={
+                    !mapperCourseId || isDryRun || courseWorkflowRunning || smartWorkflowRunning || globalSweepRunning || mapperRunning || mapperExecuting || massOrganizing || mapperLoading
+                  }
+                  className="gap-1.5"
+                >
+                  {courseWorkflowRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  {courseWorkflowRunning ? 'Running Live Course…' : 'Run Live (Selected Course)'}
+                </Button>
+                <Button
+                  variant="default"
                   onClick={executeMapperBulk}
-                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning}
+                  disabled={mapperExecuting || mapperRunning || massOrganizing || mapperRows.length === 0 || smartWorkflowRunning || courseWorkflowRunning}
                   className="gap-1.5"
                 >
                   {mapperExecuting ? (
@@ -1770,7 +2016,7 @@ export default function FileOrganizerPage() {
                 <Button
                   variant="secondary"
                   onClick={handleExecuteMassOrganization}
-                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0 || smartWorkflowRunning}
+                  disabled={massOrganizing || mapperExecuting || mapperRunning || mapperRows.length === 0 || smartWorkflowRunning || courseWorkflowRunning}
                   className="gap-1.5"
                 >
                   {massOrganizing ? (
@@ -1785,7 +2031,7 @@ export default function FileOrganizerPage() {
                     id="cleanup-untitled"
                     checked={cleanupUntitled}
                     onCheckedChange={setCleanupUntitled}
-                    disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing || smartWorkflowRunning || courseWorkflowRunning}
                   />
                   <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
                     Also clean other empty Untitled/Scan folders
@@ -1854,6 +2100,11 @@ export default function FileOrganizerPage() {
               {smartWorkflowRunning && (
                 <p className="text-xs text-muted-foreground">
                   Smart workflow step: {smartWorkflowStep || 'Preparing…'}
+                </p>
+              )}
+              {courseWorkflowRunning && (
+                <p className="text-xs text-muted-foreground">
+                  Selected-course live step: {smartWorkflowStep || 'Preparing…'}
                 </p>
               )}
             </CardContent>
