@@ -27,21 +27,35 @@ describe('matchMultipleResources', () => {
 });
 
 describe('generateCanvasPageHtml resource grouping', () => {
-  it('renders enhanced grouped resources under category headers', () => {
+  it('renders only Saxon Math Textbook and Lesson Odds links for Math', () => {
     const html = generateCanvasPageHtml({
       subject: 'Math',
-      rows: [{
-        day: 'Monday',
-        type: 'Lesson',
-        lesson_num: '23',
-        in_class: 'Lesson 23',
-        at_home: '',
-        canvas_url: null,
-        canvas_assignment_id: null,
-        object_id: null,
-        subject: 'Math',
-        resources: null,
-      }],
+      rows: [
+        {
+          day: 'Monday',
+          type: 'Lesson',
+          lesson_num: '117',
+          in_class: 'Lesson 117',
+          at_home: '',
+          canvas_url: 'https://x/courses/1/assignments/117',
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Math',
+          resources: null,
+        },
+        {
+          day: 'Tuesday',
+          type: 'Lesson',
+          lesson_num: '23',
+          in_class: 'Lesson 23',
+          at_home: '',
+          canvas_url: null,
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Math',
+          resources: null,
+        },
+      ],
       quarter: 'Q4',
       weekNum: 5,
       dateRange: '2026-01-01 – 2026-01-05',
@@ -53,11 +67,17 @@ describe('generateCanvasPageHtml resource grouping', () => {
       quarterColor: '#0065a7',
       contentMap,
     });
-    expect(html).toContain('<strong>Study Guides:</strong>');
-    expect(html).toContain('Study Guide 23 Blank');
-    expect(html).toContain('<strong>Power Ups:</strong>');
-    expect(html).toContain('Packet 1');
-    expect(html).toContain('Packet 2');
+    // Only Saxon Math Textbook and Lesson 117 Odds should appear in the resources block
+    expect(html).toContain('Saxon Math Textbook');
+    expect(html).toContain('Lesson 117 Odds');
+    // Power Ups, Study Guides, and subjectResources Packet must not appear
+    expect(html).not.toContain('<strong>Study Guides:</strong>');
+    expect(html).not.toContain('Study Guide 23 Blank');
+    expect(html).not.toContain('<strong>Power Ups:</strong>');
+    expect(html).not.toContain('Packet 1');
+    expect(html).not.toContain('Packet 2');
+    // Lesson 23 has no canvas_url so no Odds link for it
+    expect(html).not.toContain('Lesson 23 Odds');
   });
 
   it('injects math study guide links into reminders when a test row exists', () => {
