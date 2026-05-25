@@ -124,6 +124,7 @@ export default function FileOrganizerPage() {
   const [mapperProgressLabel, setMapperProgressLabel] = useState<string>('Processing files');
   const [rowExecutingId, setRowExecutingId] = useState<string | null>(null);
   const [isDryRun, setIsDryRun] = useState(false);
+  const [collisionIds, setCollisionIds] = useState<Set<string>>(new Set());
   const [mapperPaused, setMapperPaused] = useState(false);
   const [mapperCancelRequested, setMapperCancelRequested] = useState(false);
   const [mapperInFlightCount, setMapperInFlightCount] = useState(0);
@@ -468,8 +469,37 @@ export default function FileOrganizerPage() {
     return logEntries.length;
   }, []);
 
+  const detectNameCollisions = useCallback((rows: OrphanFile[]): Set<string> => {
+    const seen = new Map<string, string>(); // collision key -> first fileId
+    const collisions = new Set<string>();
+    for (const row of rows) {
+      const name = (row.ai_suggested_name ?? '').trim().toLowerCase();
+      const folder = (row.ai_suggested_folder ?? '').trim().toLowerCase();
+      const courseId = row.course_id ?? '';
+      if (!name) continue;
+      const key = `${courseId}|${folder}|${name}`;
+      if (seen.has(key)) {
+        collisions.add(row.canvas_file_id);
+        collisions.add(seen.get(key)!);
+      } else {
+        seen.set(key, row.canvas_file_id);
+      }
+    }
+    return collisions;
+  }, []);
+
   const executeMapperRow = useCallback(
-    async (row: OrphanFile) => {
+    async (row: OrphanFile, currentMapperRows: OrphanFile[]) => {
+      // Collision check: abort if another file targets the same name+folder+course
+      const collisions = detectNameCollisions(currentMapperRows);
+      if (collisions.has(row.canvas_file_id)) {
+        setCollisionIds(collisions);
+        toast.error('Collision Detected', {
+          description: `"${row.ai_suggested_name}" already targets folder "${row.ai_suggested_folder ?? ''}" for course ${row.course_id ?? ''}`,
+        });
+        return;
+      }
+
       setRowExecutingId(row.canvas_file_id);
       try {
         if (isDryRun) {
@@ -496,7 +526,7 @@ export default function FileOrganizerPage() {
         setRowExecutingId(null);
       }
     },
-    [isDryRun, logMapperDryRunChanges],
+    [isDryRun, logMapperDryRunChanges, detectNameCollisions],
   );
 
   const executeMapperBulk = useCallback(async () => {
@@ -505,46 +535,56 @@ export default function FileOrganizerPage() {
       return;
     }
 
+    // Detect name collisions before any execution
+    const collisions = detectNameCollisions(mapperRows);
+    setCollisionIds(collisions);
+    if (collisions.size > 0) {
+      toast.warning(`${collisions.size} collision(s) detected`, {
+        description: 'Files with duplicate name+folder combinations will be skipped and flagged.',
+      });
+    }
+
+    const rowsToExecute = mapperRows.filter((row) => !collisions.has(row.canvas_file_id));
+    if (rowsToExecute.length === 0) {
+      toast.error('All files have name collisions — resolve them before executing.');
+      return;
+    }
+
     setMapperExecuting(true);
     setMapperProgressLabel('Executing rename & move');
-    setMapperProgress({ current: 0, total: mapperRows.length });
+    setMapperProgress({ current: 0, total: rowsToExecute.length });
     try {
       if (isDryRun) {
-        const logged = await logMapperDryRunChanges(mapperRows);
-        setMapperProgress({ current: mapperRows.length, total: mapperRows.length });
+        const logged = await logMapperDryRunChanges(rowsToExecute);
+        setMapperProgress({ current: rowsToExecute.length, total: rowsToExecute.length });
         toast.success(`Dry Run: Logged ${logged} changes to simulation database`);
         return;
       }
 
-      const payload = mapperRows.map((row) => ({
-        fileId: row.canvas_file_id,
-        suggestedName: row.ai_suggested_name,
-        suggestedFolder: row.ai_suggested_folder,
-      }));
-
-      const chunks: Array<typeof payload> = [];
-      for (let i = 0; i < payload.length; i += EXECUTE_CHUNK_SIZE) {
-        chunks.push(payload.slice(i, i + EXECUTE_CHUNK_SIZE));
-      }
-
+      // Rate-limited execution: 1 file per second to avoid Canvas API 429 errors
       const succeededIds = new Set<string>();
-      let processed = 0;
 
-      for (const chunk of chunks) {
+      for (let i = 0; i < rowsToExecute.length; i++) {
+        const row = rowsToExecute[i];
+
         const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
-          body: { items: chunk },
+          body: {
+            fileId: row.canvas_file_id,
+            suggestedName: row.ai_suggested_name,
+            suggestedFolder: row.ai_suggested_folder,
+          },
         });
-        if (error) throw error;
-        if ((data as any)?.error) throw new Error((data as any).error);
 
-        const chunkResults = ((data as any)?.results as Array<{ fileId: string; ok: boolean }>) ?? [];
-        chunkResults
-          .filter((r) => r.ok)
-          .forEach((r) => succeededIds.add(String(r.fileId)));
+        if (!error && !(data as any)?.error) {
+          succeededIds.add(String(row.canvas_file_id));
+        }
 
-        processed += chunk.length;
-        setMapperProgress({ current: Math.min(processed, payload.length), total: payload.length });
-        await sleep(0);
+        setMapperProgress({ current: i + 1, total: rowsToExecute.length });
+
+        // 1-per-second rate limit (skip delay after the last file)
+        if (i < rowsToExecute.length - 1) {
+          await sleep(1000);
+        }
       }
 
       setMapperRows((prev) => prev.filter((row) => !succeededIds.has(String(row.canvas_file_id))));
@@ -558,7 +598,7 @@ export default function FileOrganizerPage() {
       setMapperExecuting(false);
       setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
     }
-  }, [isDryRun, logMapperDryRunChanges, mapperRows]);
+  }, [isDryRun, logMapperDryRunChanges, mapperRows, detectNameCollisions]);
 
   // Load batch progress on mount (for resume on reload)
   const loadBatchProgress = useCallback(async () => {
@@ -725,6 +765,13 @@ export default function FileOrganizerPage() {
         .eq('canvas_file_id', selected.canvas_file_id);
       if (updErr) throw updErr;
 
+      if (isDryRun) {
+        const rowToLog = { ...selected, ai_suggested_name: editName.trim(), ai_lesson_ref: editLessonRef.trim() || null };
+        const logged = await logMapperDryRunChanges([rowToLog]);
+        toast.success(`Dry Run: Logged ${logged} change(s) to simulation database`);
+        return;
+      }
+
       const { data, error } = await supabase.functions.invoke('canvas-file-rename', {
         body: { fileId: selected.canvas_file_id },
       });
@@ -840,6 +887,17 @@ export default function FileOrganizerPage() {
           <Button variant="outline" size="sm" onClick={loadFiles} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="global-dry-run"
+              checked={isDryRun}
+              onCheckedChange={setIsDryRun}
+              disabled={mapperRunning || mapperExecuting || approving}
+            />
+            <Label htmlFor="global-dry-run" className="text-xs whitespace-nowrap cursor-pointer">
+              Dry Run (Log Only)
+            </Label>
+          </div>
         </div>
       </div>
 
@@ -1149,6 +1207,12 @@ export default function FileOrganizerPage() {
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
+                      {isDryRun && (
+                        <Badge variant="outline" className="self-center text-[10px] gap-1 border-amber-400 text-amber-700">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          Dry Run active — Canvas API blocked
+                        </Badge>
+                      )}
                       <Button
                         variant="outline"
                         onClick={() => setSelectedId(null)}
@@ -1166,7 +1230,7 @@ export default function FileOrganizerPage() {
                         ) : (
                           <CheckCircle2 className="h-3.5 w-3.5" />
                         )}
-                        {approving ? 'Approving…' : 'Approve & Move'}
+                        {approving ? 'Approving…' : isDryRun ? 'Log (Dry Run)' : 'Approve & Move'}
                       </Button>
                     </div>
                   </div>
@@ -1246,17 +1310,6 @@ export default function FileOrganizerPage() {
                   )}
                   Execute Rename & Move
                 </Button>
-                <div className="flex items-center gap-2 ml-1 mb-1">
-                  <Switch
-                    id="mapper-dry-run"
-                    checked={isDryRun}
-                    onCheckedChange={setIsDryRun}
-                    disabled={mapperRunning || mapperExecuting}
-                  />
-                  <Label htmlFor="mapper-dry-run" className="text-xs whitespace-nowrap">
-                    Enable Dry Run (Log Only)
-                  </Label>
-                </div>
               </div>
 
               {mapperProgress.total > 0 && (
@@ -1338,9 +1391,11 @@ export default function FileOrganizerPage() {
                             <TableRow
                               key={row.canvas_file_id}
                               className={
-                                String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
-                                  ? 'bg-amber-50/70'
-                                  : undefined
+                                collisionIds.has(row.canvas_file_id)
+                                  ? 'bg-red-50/70'
+                                  : String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
+                                    ? 'bg-amber-50/70'
+                                    : undefined
                               }
                             >
                               <TableCell className="max-w-[260px]">
@@ -1404,9 +1459,15 @@ export default function FileOrganizerPage() {
                                 )}
                               </TableCell>
                               <TableCell>
+                                {collisionIds.has(row.canvas_file_id) ? (
+                                  <Badge variant="destructive" className="text-[10px] gap-1">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    Collision Detected
+                                  </Badge>
+                                ) : (
                                 <Button
                                   size="sm"
-                                  onClick={() => executeMapperRow(row)}
+                                  onClick={() => executeMapperRow(row, mapperRows)}
                                   disabled={
                                     mapperRunning ||
                                     mapperExecuting ||
@@ -1422,6 +1483,7 @@ export default function FileOrganizerPage() {
                                   )}
                                   Apply to Canvas
                                 </Button>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
