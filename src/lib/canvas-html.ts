@@ -329,68 +329,73 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
   }
   parts.push(`  </div>`);
 
-  const mergedResources: Resource[] = [...subjectResources];
-  const seen = new Set(subjectResources.map((r) => `${r.group || ''}::${r.label}::${r.url || ''}`));
-  for (const row of rows) {
-    if (!row.resources) continue;
-    for (const r of parseResources(row.resources)) {
-      const key = `${r.group || ''}::${r.label}::${r.url || ''}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        mergedResources.push(r);
-      }
-    }
-  }
-  for (const row of rows) {
-    for (const group of matchMultipleResources(contentMap, row.subject, row.lesson_num)) {
-      for (const resource of group.resources) {
-        const groupedResource: Resource = {
-          ...resource,
-          group: group.label,
-        };
-        const key = `${groupedResource.group || ''}::${groupedResource.label}::${groupedResource.url || ''}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          mergedResources.push(groupedResource);
-        }
-      }
-    }
-  }
-
-  // Remove individual lesson workbook pages and blocked study-guide files.
-  // Only "Workbook Part 1.pdf" and "Workbook Part 2.pdf" entries survive.
-  const filteredResources = mergedResources.filter((r) => !shouldExcludeResource(r.label));
-
-  // For Math lessons 117–119, add a "Lesson N Odds" assignment link alongside the textbook.
+  parts.push(`  <div id="kl_custom_block_5" class="">`);
   if (subject === 'Math') {
+    // Math Resources: show only the Saxon Math Textbook and current-week Lesson Odds links.
+    const textbookEntry = contentMap.find((e) => e.lesson_ref === 'Math_Textbook' && e.canvas_url);
+    const mathResources: Resource[] = [];
+    if (textbookEntry?.canvas_url) {
+      mathResources.push({ label: 'Saxon Math Textbook', url: textbookEntry.canvas_url });
+    }
     const MATH_ODDS_LESSONS = new Set([117, 118, 119]);
     for (const row of rows) {
       if (!row.canvas_url) continue;
       const n = Number.parseInt((row.lesson_num || '').trim(), 10);
       if (!MATH_ODDS_LESSONS.has(n)) continue;
-      const label = `Lesson ${n} Odds`;
-      const key = `Textbook::${label}::${row.canvas_url}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        filteredResources.push({ label, url: row.canvas_url, group: 'Textbook' });
-      }
+      mathResources.push({ label: `Lesson ${n} Odds`, url: row.canvas_url });
     }
-  }
-
-  parts.push(`  <div id="kl_custom_block_5" class="">`);
-  if (filteredResources.length > 0) {
-    parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
-    let currentGroup: string | undefined = undefined;
-    for (const r of filteredResources) {
-      if (r.group && r.group !== currentGroup) {
-        currentGroup = r.group;
-        parts.push(`    <p><strong>${r.group}:</strong></p>`);
+    if (mathResources.length > 0) {
+      parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
+      for (const r of mathResources) {
+        parts.push(renderResource(r));
       }
-      parts.push(renderResource(r));
     }
     parts.push(`    <p>&nbsp;</p>`);
   } else {
-    parts.push(`    <p>&nbsp;</p>`);
+    const mergedResources: Resource[] = [...subjectResources];
+    const seen = new Set(subjectResources.map((r) => `${r.group || ''}::${r.label}::${r.url || ''}`));
+    for (const row of rows) {
+      if (!row.resources) continue;
+      for (const r of parseResources(row.resources)) {
+        const key = `${r.group || ''}::${r.label}::${r.url || ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          mergedResources.push(r);
+        }
+      }
+    }
+    for (const row of rows) {
+      for (const group of matchMultipleResources(contentMap, row.subject, row.lesson_num)) {
+        for (const resource of group.resources) {
+          const groupedResource: Resource = {
+            ...resource,
+            group: group.label,
+          };
+          const key = `${groupedResource.group || ''}::${groupedResource.label}::${groupedResource.url || ''}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            mergedResources.push(groupedResource);
+          }
+        }
+      }
+    }
+    // Remove individual lesson workbook pages and blocked study-guide files.
+    // Only "Workbook Part 1.pdf" and "Workbook Part 2.pdf" entries survive.
+    const filteredResources = mergedResources.filter((r) => !shouldExcludeResource(r.label));
+    if (filteredResources.length > 0) {
+      parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
+      let currentGroup: string | undefined = undefined;
+      for (const r of filteredResources) {
+        if (r.group && r.group !== currentGroup) {
+          currentGroup = r.group;
+          parts.push(`    <p><strong>${r.group}:</strong></p>`);
+        }
+        parts.push(renderResource(r));
+      }
+      parts.push(`    <p>&nbsp;</p>`);
+    } else {
+      parts.push(`    <p>&nbsp;</p>`);
+    }
   }
   parts.push(`  </div>`);
 
