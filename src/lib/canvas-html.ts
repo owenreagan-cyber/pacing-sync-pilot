@@ -337,12 +337,18 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     if (textbookEntry?.canvas_url) {
       mathResources.push({ label: 'Saxon Math Textbook', url: textbookEntry.canvas_url });
     }
-    const MATH_ODDS_LESSONS = new Set([117, 118, 119]);
+    const seenLessonOdds = new Set<string>();
     for (const row of rows) {
       if (!row.canvas_url) continue;
+      const rowType = (row.type || '').toLowerCase();
+      const isLessonRow = rowType.includes('lesson') || /\blesson\b/i.test(row.in_class || '');
+      if (!isLessonRow) continue;
       const n = Number.parseInt((row.lesson_num || '').trim(), 10);
-      if (!MATH_ODDS_LESSONS.has(n)) continue;
-      mathResources.push({ label: `Lesson ${n} Odds`, url: row.canvas_url });
+      if (!Number.isFinite(n)) continue;
+      const label = `Lesson ${n} Odds`;
+      if (seenLessonOdds.has(label)) continue;
+      seenLessonOdds.add(label);
+      mathResources.push({ label, url: row.canvas_url });
     }
     if (mathResources.length > 0) {
       parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
