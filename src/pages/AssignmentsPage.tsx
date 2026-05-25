@@ -355,7 +355,7 @@ export default function AssignmentsPage() {
 
     setDeployResults(results);
     toast.success(`${ok} deployed, ${err} failed`, { id: toastId });
-    void logDeployHabit(deployable.map((r) => r.subject));
+    for (const s of new Set(deployable.map((r) => r.subject))) void logDeployHabit(s);
     setDeploying(false);
   };
 
