@@ -67,6 +67,36 @@ function mimeFromName(name: string): string {
   return "image/png";
 }
 
+function applyManualRenameOverrides(originalName: string, suggestedName: string): string {
+  const original = (originalName || "").trim();
+  const proposed = (suggestedName || "").trim();
+  const source = proposed || original;
+  if (!source) return suggestedName;
+
+  const workbookMatch = source.match(/^reading workbook lesson\s*(\d{1,3})(?:\.pdf)?$/i);
+  if (workbookMatch) {
+    const lesson = workbookMatch[1];
+    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
+    return `Spelling Workbook Lesson ${lesson}${keepPdf ? ".pdf" : ""}`;
+  }
+
+  const compactSource = source.replace(/[\s-]+/g, "_").toUpperCase();
+  const glossaryMap: Record<string, string> = {
+    R_GL_A: "Reading Glossary: Book A",
+    R_GL_B: "Reading Glossary: Book B",
+    R_GL_C: "Reading Glossary: Book C",
+  };
+  const glossaryKey = Object.keys(glossaryMap).find((key) =>
+    compactSource === key || compactSource === `${key}.PDF`
+  );
+  if (glossaryKey) {
+    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
+    return `${glossaryMap[glossaryKey]}${keepPdf ? ".pdf" : ""}`;
+  }
+
+  return suggestedName;
+}
+
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
   // Chunked to avoid stack overflow on large files
   let binary = "";
@@ -199,6 +229,11 @@ Use the classify_file tool to return your answer.`;
       }
     }
 
+    const adjustedSuggestedName = applyManualRenameOverrides(
+      String(orphan.original_name ?? ""),
+      String(parsed.suggested_name ?? ""),
+    );
+    parsed.suggested_name = adjustedSuggestedName || parsed.suggested_name;
     const aiLessonRef = buildLessonRef(parsed.subject, parsed.type, parsed.lesson_num);
 
     // 4. Update the orphan row

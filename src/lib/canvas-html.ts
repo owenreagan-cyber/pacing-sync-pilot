@@ -121,11 +121,11 @@ function atHomeLabel(subject: string): string {
 
 /**
  * Returns true for resource labels that should be suppressed from the UI:
- *   - "Reading Workbook Lesson NNN.pdf" (individual lesson pages)
+ *   - "Reading Workbook Lesson NNN.pdf" / "Spelling Workbook Lesson NNN.pdf" (individual lesson pages)
  *   - R_SG_006.pdf, R_SG_007*, R_SG_008*, R_SG_009.pdf
  */
-function shouldExcludeResource(label: string): boolean {
-  if (/Reading Workbook Lesson \d{3}\.pdf/i.test(label)) return true;
+export function shouldExcludeResource(label: string): boolean {
+  if (/(Reading|Spelling) Workbook Lesson \d{1,3}\.pdf/i.test(label)) return true;
   if (/^R_SG_006\.pdf$/i.test(label)) return true;
   if (/^R_SG_007/i.test(label)) return true;
   if (/^R_SG_008/i.test(label)) return true;

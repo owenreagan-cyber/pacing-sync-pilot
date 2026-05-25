@@ -71,7 +71,7 @@ async function fetchFolderById(
 function normalizeCanvasFileName(name: string): string {
   const sanitized = name
     .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}\s._()-]/gu, "")
+    .replace(/[^\p{L}\p{N}\s._()\-:]/gu, "")
     .replace(/\s+/g, " ")
     .replace(/\.{2,}/g, ".")
     .trim();
