@@ -203,12 +203,17 @@ export default function AssignmentsPage() {
       for (const subject of SUBJECTS) {
         for (let dayIdx = 0; dayIdx < DAYS.length; dayIdx++) {
           const day = DAYS[dayIdx];
-          const cell = { day, dayIndex: dayIdx, isTest: false };
-
           const row = pacingRows.find(
             (r: any) => r.subject === subject && r.day === day,
           );
           if (!row) continue;
+          const cell = {
+            value: row.lesson_num || '',
+            lessonNum: row.lesson_num || '',
+            isTest: (row.type || '').toLowerCase().includes('test'),
+            isReview: false,
+            isNoClass: isDash(row.type),
+          };
 
           // Skip rows with dash-like types
           if (isDash(row.type)) {
