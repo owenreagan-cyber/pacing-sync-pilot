@@ -210,4 +210,28 @@ describe('FPK compliance', () => {
       expect(getReadingFluencyTarget('14').wpm).toBe(130);
     });
   });
+
+  it('accepts Q4W8 Reading schedule and keeps Reading Test 14 on Thursday', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading',
+      rows: [
+        { day: 'Monday', type: 'No Class', lesson_num: null, in_class: 'NO SCHOOL', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Tuesday', type: 'Lesson', lesson_num: '138', in_class: 'Reading Lesson 138', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Wednesday', type: 'Lesson', lesson_num: '139', in_class: 'Reading Lesson 139', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Thursday', type: 'Test', lesson_num: '14', in_class: 'Reading Test 14', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Friday', type: 'No Class', lesson_num: null, in_class: 'FIELD DAY', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+      ],
+      quarter: 'Q4',
+      weekNum: 8,
+      dateRange: 'May 25-29',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+    });
+
+    const result = validateFpkPage(html, 'Reading');
+    expect(result.pass).toBe(true);
+    expect(html).toContain('Reading Test 14');
+    expect(html).toContain('Thursday');
+  });
 });
