@@ -300,7 +300,9 @@ Deno.serve(async (req) => {
     // ===== Admin email summary via Resend =====
     try {
       const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-      const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') ?? 'onboarding@resend.dev';
+      // Env var takes priority; fall back to admin_email stored in system_config
+      const { data: cfg } = await sb.from('system_config').select('admin_email').eq('id', 'current').single();
+      const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') || (cfg as { admin_email?: string } | null)?.admin_email || 'onboarding@resend.dev';
       const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Pacing Bot <onboarding@resend.dev>';
 
       if (RESEND_API_KEY) {

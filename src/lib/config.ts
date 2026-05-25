@@ -21,6 +21,7 @@ export interface AppConfig {
   spellingWordBank: Record<string, string[]>;
   autoLogic: AutoLogic;
   canvasBaseUrl: string;
+  adminEmail: string;
 }
 
 export const ConfigContext = createContext<AppConfig | null>(null);
@@ -57,6 +58,7 @@ export async function loadConfig(): Promise<AppConfig> {
         togetherLogicCourseId: TOGETHER_LOGIC_COURSE_ID,
       },
       canvasBaseUrl: 'https://thalesacademy.instructure.com',
+      adminEmail: '',
     };
   }
 
@@ -71,5 +73,6 @@ export async function loadConfig(): Promise<AppConfig> {
     spellingWordBank: data.spelling_word_bank as Record<string, string[]>,
     autoLogic: { ...autoLogic, togetherLogicCourseId: TOGETHER_LOGIC_COURSE_ID },
     canvasBaseUrl: data.canvas_base_url || 'https://thalesacademy.instructure.com',
+    adminEmail: data.admin_email || '',
   };
 }
