@@ -2037,6 +2037,17 @@ export default function FileOrganizerPage() {
                     Also clean other empty Untitled/Scan folders
                   </Label>
                 </div>
+                <div className="flex items-center gap-2 ml-1 mb-1">
+                  <Switch
+                    id="cleanup-untitled"
+                    checked={cleanupUntitled}
+                    onCheckedChange={setCleanupUntitled}
+                    disabled={mapperRunning || mapperExecuting || massOrganizing}
+                  />
+                  <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
+                    Auto-delete empty Untitled/Scan folders
+                  </Label>
+                </div>
               </div>
 
               {mapperProgress.total > 0 && (
