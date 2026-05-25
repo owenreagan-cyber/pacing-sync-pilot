@@ -1,0 +1,168 @@
+name: CI Diagnostic
+
+on:
+  push:
+    branches: [ci-diagnostic-test]
+  pull_request:
+    branches: [ci-diagnostic-test]
+
+permissions:
+  contents: read
+
+jobs:
+  environment-check:
+    runs-on: ubuntu-latest
+    name: "1️⃣ Environment & Permissions Check"
+    steps:
+      - name: "📋 Log GitHub Context"
+        run: |
+          echo "=== GitHub Environment ==="
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+          echo "=== Runner Environment ==="
+          uname -a
+          node --version
+          npm --version
+          echo ""
+          echo "=== Disk Space ==="
+          df -h
+          echo ""
+          echo "=== Memory ==="
+          free -h
+
+  checkout-test:
+    runs-on: ubuntu-latest
+    name: "2️⃣ Checkout & File Verification"
+    steps:
+      - name: "🔄 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "📁 List Directory Structure"
+        run: |
+          echo "=== Root Directory ==="
+          ls -la
+          echo ""
+          echo "=== .github/workflows ==="
+          ls -la .github/workflows/
+          echo ""
+          echo "=== package.json exists? ==="
+          test -f package.json && echo "✅ package.json found" || echo "❌ package.json NOT found"
+          echo ""
+          echo "=== supabase/functions/canvas-deploy-assignment exists? ==="
+          test -f supabase/functions/canvas-deploy-assignment/index.ts && echo "✅ File found" || echo "❌ File NOT found"
+
+  dependency-test:
+    runs-on: ubuntu-latest
+    name: "3️⃣ Node & Dependency Installation"
+    steps:
+      - name: "🔄 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "📦 Setup Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: "📥 Install Dependencies"
+        run: |
+          echo "=== npm ci output ==="
+          npm ci --verbose || (echo "❌ npm ci failed"; exit 1)
+          echo ""
+          echo "=== Installed packages ==="
+          npm list --depth=0
+
+  lint-test:
+    runs-on: ubuntu-latest
+    name: "4️⃣ Lint & TypeScript Check"
+    steps:
+      - name: "🔄 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "📦 Setup Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: "📥 Install Dependencies"
+        run: npm ci
+
+      - name: "🔍 Lint"
+        run: |
+          echo "=== Running ESLint ==="
+          npm run lint 2>&1 || true
+
+      - name: "🔧 TypeScript Check"
+        run: |
+          echo "=== Running TypeScript ==="
+          npx tsc --noEmit 2>&1 || true
+
+  guard-test:
+    runs-on: ubuntu-latest
+    name: "5️⃣ Regression Guards"
+    steps:
+      - name: "🔄 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🚫 Guard: kl_custom_block_7"
+        run: |
+          echo "=== Checking for kl_custom_block_7 ==="
+          if grep -R -nF "kl_custom_block_7" src supabase api --exclude-dir=test --exclude-dir=tests --exclude='*.test.ts' --exclude='*.test.tsx' 2>/dev/null; then
+            echo "❌ Found forbidden token: kl_custom_block_7"
+            exit 1
+          else
+            echo "✅ Guard passed: kl_custom_block_7 not found"
+          fi
+
+      - name: "🛡️ Guard: assignment deployer submission_types"
+        run: |
+          echo "=== Checking for on_paper submission type ==="
+          if grep -nE "submission_types.*on_paper" supabase/functions/canvas-deploy-assignment/index.ts; then
+            echo "✅ Guard passed: on_paper submission type found"
+          else
+            echo "❌ Guard failed: on_paper not found"
+            exit 1
+          fi
+
+      - name: "🚫 Guard: gemini-2.5-flash"
+        run: |
+          echo "=== Checking for gemini-2.5-flash ==="
+          if grep -R -nF "gemini-2.5-flash" src supabase api 2>/dev/null; then
+            echo "❌ Found forbidden model token: gemini-2.5-flash"
+            exit 1
+          else
+            echo "✅ Guard passed: gemini-2.5-flash not found"
+          fi
+
+  summary:
+    runs-on: ubuntu-latest
+    name: "✅ Diagnostic Summary"
+    needs: [environment-check, checkout-test, dependency-test, lint-test, guard-test]
+    if: always()
+    steps:
+      - name: "📊 Print Results"
+        run: |
+          echo "=== Diagnostic Workflow Summary ==="
+          echo "environment-check: ${{ needs.environment-check.result }}"
+          echo "checkout-test: ${{ needs.checkout-test.result }}"
+          echo "dependency-test: ${{ needs.dependency-test.result }}"
+          echo "lint-test: ${{ needs.lint-test.result }}"
+          echo "guard-test: ${{ needs.guard-test.result }}"
+          echo ""
+          if [[ "${{ needs.environment-check.result }}" == "success" && \
+                "${{ needs.checkout-test.result }}" == "success" && \
+                "${{ needs.dependency-test.result }}" == "success" && \
+                "${{ needs.lint-test.result }}" == "success" && \
+                "${{ needs.guard-test.result }}" == "success" ]]; then
+            echo "✅ All diagnostic checks passed!"
+            exit 0
+          else
+            echo "⚠️ Some checks failed. Review logs above."
+            exit 0
+          fi
