@@ -118,16 +118,6 @@ function getProposedPath(row: OrphanFile): string {
   return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
 }
 
-function getCurrentPath(row: OrphanFile): string {
-  return (row.original_name ?? row.canvas_file_id).trim();
-}
-
-function getProposedPath(row: OrphanFile): string {
-  const proposedName = row.ai_suggested_name?.trim() || row.original_name?.trim() || row.canvas_file_id;
-  const proposedFolder = row.ai_suggested_folder?.trim();
-  return proposedFolder ? `${proposedFolder}/${proposedName}` : proposedName;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
