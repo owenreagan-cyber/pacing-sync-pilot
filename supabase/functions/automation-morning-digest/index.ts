@@ -52,9 +52,11 @@ Deno.serve(async (req) => {
   try {
     const today = todayDayName();
 
-    // Resolve admin email: env var takes priority, then fall back to system_config
-    const { data: cfg } = await sb.from('system_config').select('admin_email').eq('id', 'current').single();
+    // Resolve recipients: env var takes priority, then fall back to system_config
+    const { data: cfg } = await sb.from('system_config').select('admin_email, morning_digest_emails').eq('id', 'current').single();
     const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') || (cfg as { admin_email?: string } | null)?.admin_email || 'onboarding@resend.dev';
+    const extraEmails: string[] = (cfg as { morning_digest_emails?: string[] } | null)?.morning_digest_emails ?? [];
+    const recipients = Array.from(new Set([ADMIN_EMAIL, ...extraEmails].filter(Boolean)));
 
     const { data: rows, error } = await sb
       .from('pacing_rows')
@@ -88,7 +90,7 @@ Deno.serve(async (req) => {
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         from: FROM_EMAIL,
-        to: [ADMIN_EMAIL],
+        to: recipients,
         subject: `🌅 Day Ahead — ${today}`,
         html,
       }),
@@ -100,10 +102,10 @@ Deno.serve(async (req) => {
       type: 'morning-digest',
       subject: today,
       status: emailed ? 'OK' : 'WARN',
-      message: `Morning digest for ${today}: ${(rows ?? []).length} rows, emailed=${emailed}`,
+      message: `Morning digest for ${today}: ${(rows ?? []).length} rows, emailed=${emailed}, recipients=${recipients.length}`,
     });
 
-    return new Response(JSON.stringify({ success: true, day: today, rows: rows?.length ?? 0, emailed, aiSummary }), {
+    return new Response(JSON.stringify({ success: true, day: today, rows: rows?.length ?? 0, emailed, recipients: recipients.length, aiSummary }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
