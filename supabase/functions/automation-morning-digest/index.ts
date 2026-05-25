@@ -11,7 +11,6 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? 're_c1tpEyD8_NKFusih9vKVQknRAQfmFcWCv';
-const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') ?? 'onboarding@resend.dev';
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Thales OS <onboarding@resend.dev>';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -52,6 +51,10 @@ Deno.serve(async (req) => {
 
   try {
     const today = todayDayName();
+
+    // Resolve admin email: env var takes priority, then fall back to system_config
+    const { data: cfg } = await sb.from('system_config').select('admin_email').eq('id', 'current').single();
+    const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') || (cfg as { admin_email?: string } | null)?.admin_email || 'onboarding@resend.dev';
 
     const { data: rows, error } = await sb
       .from('pacing_rows')

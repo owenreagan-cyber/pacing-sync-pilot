@@ -10,7 +10,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.95.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') ?? 'onboarding@resend.dev';
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Thales OS <onboarding@resend.dev>';
 
 Deno.serve(async (req) => {
@@ -19,6 +18,10 @@ Deno.serve(async (req) => {
 
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    // Resolve admin email: env var takes priority, then fall back to system_config
+    const { data: cfg } = await sb.from('system_config').select('admin_email').eq('id', 'current').single();
+    const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') || (cfg as { admin_email?: string } | null)?.admin_email || 'onboarding@resend.dev';
 
     const { data: logs, error } = await sb
       .from('deploy_logs')

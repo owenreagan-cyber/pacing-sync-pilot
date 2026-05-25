@@ -139,6 +139,25 @@ function CalendarTab() {
 
 export default function SettingsPage() {
   const config = useConfig();
+  const [adminEmail, setAdminEmail] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+
+  useEffect(() => {
+    if (config?.adminEmail) setAdminEmail(config.adminEmail);
+  }, [config?.adminEmail]);
+
+  const saveAdminEmail = async () => {
+    const trimmed = adminEmail.trim();
+    if (!trimmed) { toast.error('Please enter a valid email address'); return; }
+    setSavingEmail(true);
+    const { error } = await supabase
+      .from('system_config')
+      .update({ admin_email: trimmed })
+      .eq('id', 'current');
+    setSavingEmail(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success('Admin email saved');
+  };
 
   return (
     <Tabs defaultValue="general" className="space-y-4">
@@ -148,6 +167,29 @@ export default function SettingsPage() {
       </TabsList>
 
       <TabsContent value="general" className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Admin Email</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Used as the destination for the Morning Digest and nightly monitor emails.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="email"
+                placeholder="you@school.org"
+                value={adminEmail}
+                onChange={(e) => setAdminEmail(e.target.value)}
+                className="max-w-sm"
+              />
+              <Button onClick={saveAdminEmail} disabled={savingEmail}>
+                {savingEmail ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Canvas Configuration</CardTitle>
