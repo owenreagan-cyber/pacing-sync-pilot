@@ -1,6 +1,6 @@
 // canvas-cleanup-folders
 // Scans Canvas courses for empty folders and deletes them.
-// Input (POST): { dryRun?: boolean }
+// Input (POST): { dryRun?: boolean, courseId?: number|string, courseIds?: Array<number|string> }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -79,6 +79,16 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const dryRun: boolean = body?.dryRun === true;
+    const requestedCourseIds = new Set<number>();
+    const rawCourseIds = Array.isArray(body?.courseIds)
+      ? body.courseIds
+      : body?.courseId !== undefined && body?.courseId !== null
+        ? [body.courseId]
+        : [];
+    for (const raw of rawCourseIds) {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed > 0) requestedCourseIds.add(parsed);
+    }
     const targetFolders: TargetFolder[] = Array.isArray(body?.targetFolders)
       ? body.targetFolders
         .map((item: Partial<TargetFolder>) => ({
@@ -111,7 +121,10 @@ Deno.serve(async (req) => {
       .eq("id", "current")
       .maybeSingle();
     const courseIdMap: Record<string, number> = cfg?.course_ids ?? {};
-    const courseIds = [...new Set(Object.values(courseIdMap))];
+    const configuredCourseIds = [...new Set(Object.values(courseIdMap))];
+    const courseIds = requestedCourseIds.size > 0
+      ? configuredCourseIds.filter((id) => requestedCourseIds.has(id))
+      : configuredCourseIds;
 
     const summary = {
       coursesScanned: 0,
@@ -220,11 +233,11 @@ Deno.serve(async (req) => {
       action: "canvas-cleanup-folders",
       status: "ok",
       message: `Cleanup complete. Deleted ${summary.foldersDeleted} empty folders across ${summary.coursesScanned} courses.`,
-      payload: { dryRun, ...summary },
+      payload: { dryRun, requestedCourseIds: Array.from(requestedCourseIds), ...summary },
     });
 
     return new Response(
-      JSON.stringify({ ok: true, dryRun, summary }),
+      JSON.stringify({ ok: true, dryRun, requestedCourseIds: Array.from(requestedCourseIds), summary }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {

@@ -369,6 +369,8 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   const hay = `${name} ${resourceType} ${purpose.join(" ")}`.toLowerCase();
   if (hay.includes("investigation")) return "Investigations";
   if (hay.includes("assessment") || hay.includes("test") || hay.includes("quiz")) return "Assessments";
+  if (hay.includes("study guide") || hay.includes("studyguide") || hay.includes("sg")) return "Study Guides";
+  if (hay.includes("workbook") || hay.includes("worksheet") || hay.includes("practice")) return "Workbooks";
   if (hay.includes("reteach")) return "Reteaching";
   if (hay.includes("power up") || hay.includes("powerup")) return "Power Ups";
   if (hay.includes("textbook") || hay.includes("book")) return "Textbooks";
@@ -376,6 +378,29 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   if (hay.includes("classroom practice")) return "Classroom Practices";
   if (hay.includes("answer key")) return "Answer Keys";
   return null;
+}
+
+function normalizeSuggestedFolder(rawFolder: string | null | undefined): string | null {
+  const clean = String(rawFolder ?? "").trim();
+  if (!clean) return null;
+  const lower = clean.toLowerCase();
+  const chunkMatch = clean.match(/^(?:lessons?|chapters?)\s*(\d{1,3})\s*[-–]\s*(\d{1,3})$/i);
+  if (chunkMatch) {
+    const label = /^chapter/i.test(clean) ? "Chapters" : "Lessons";
+    return `${label} ${chunkMatch[1]}-${chunkMatch[2]}`;
+  }
+  if (/study\s*guides?|(^|[\s/_-])sg([\s/_-]|$)/i.test(lower)) return "Study Guides";
+  if (/assessments?|tests?|quizzes?/i.test(lower)) return "Assessments";
+  if (/workbooks?|worksheets?|practice|classwork/i.test(lower)) return "Workbooks";
+  if (/textbooks?|reading\s*book|math\s*book/i.test(lower)) return "Textbooks";
+  if (/answer\s*keys?|keys?\b/i.test(lower)) return "Answer Keys";
+  if (/glossar(y|ies)/i.test(lower)) return "Glossaries";
+  if (/power\s*ups?|powerup/i.test(lower)) return "Power Ups";
+  if (/reteach(ing)?/i.test(lower)) return "Reteaching";
+  if (/investigations?/i.test(lower)) return "Investigations";
+  if (/classroom\s*practices?/i.test(lower)) return "Classroom Practices";
+  if (/resources?/i.test(lower)) return "Resources";
+  return "Resources";
 }
 
 function applyFolderRules(
@@ -400,7 +425,8 @@ function applyFolderRules(
     };
   }
 
-  const categorical = categorizeFolder(conciseName, result.resourceType, result.purpose);
+  const categorical = categorizeFolder(conciseName, result.resourceType, result.purpose)
+    || normalizeSuggestedFolder(result.suggestedFolder);
   if (categorical) {
     return { ...result, suggestedName: conciseName, suggestedFolder: categorical };
   }
@@ -506,11 +532,12 @@ SUBJECT-SPECIFIC NAMING CONVENTIONS (apply strictly):
 
 STRICT FOLDER RULES:
 1. Apply Rule of 20 chunking ("Lessons 1-10", "Lessons 11-20", …) whenever lesson count > 20.
-2. ALWAYS place Investigations in "Investigations".
-3. ALWAYS place Tests/Assessments in "Assessments".
-4. ALWAYS place Reteaching materials in "Reteaching".
-5. ALWAYS place Power Ups in "Power Ups".
-6. If unsure, use "Resources" as the absolute fallback.
+2. NEVER create one-off file-specific folder names.
+3. ALWAYS use one canonical folder bucket: "Textbooks", "Workbooks", "Study Guides", "Assessments", "Answer Keys", "Power Ups", "Reteaching", "Glossaries", "Investigations", "Classroom Practices", or "Resources".
+4. ALWAYS place Tests/Assessments in "Assessments".
+5. ALWAYS place Study Guides in "Study Guides".
+6. ALWAYS place workbook/worksheet/classroom practice files in "Workbooks" unless already mapped to "Classroom Practices".
+7. If unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
 - suggestedName: remove version numbers, dates, and vendor noise (e.g., "v2_final", "scan_export").

@@ -129,10 +129,12 @@ describe('FPK compliance', () => {
     });
 
     expect(html).toContain('<div id="kl_custom_block_3" class="">');
+    expect(html).toContain('<strong>In Class</strong>');
     expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 11</p>');
     expect(html).toContain('<p><strong>Spelling:</strong> Spelling Lesson 11</p>');
-    expect(html).not.toContain('<strong>In Class</strong>');
-    expect(html).not.toContain('<strong>At Home</strong>');
+    expect(html).toContain('<strong>At Home</strong>');
+    expect(html).toContain('<p><strong>Spelling:</strong> Study Spelling Words</p>');
+    expect(html).toContain('<p><strong>Reading:</strong> Lesson 11 workbook and comprehension questions</p>');
   });
 
   it('falls back to contentMap for missing daily Spelling content on Reading pages', () => {
@@ -155,6 +157,9 @@ describe('FPK compliance', () => {
     expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 12</p>');
     expect(html).toContain('<p><strong>Spelling:</strong> <a href="https://x/courses/1/files/sp12"');
     expect(html).toContain('Spelling Lesson 12</a></p>');
+    expect(html).toContain('<strong>At Home</strong>');
+    expect(html).toContain('Study Spelling Words');
+    expect(html).toContain('Lesson 12 workbook and comprehension questions');
   });
 
   it('keeps non-Reading subjects on the existing isolated layout', () => {
@@ -182,6 +187,7 @@ describe('FPK compliance', () => {
         quarterColor: '#0065a7',
       });
 
+      expect(html).toContain('<strong>In Class</strong>');
       expect(html).toContain('<p><strong>Reading:</strong> Reading Lesson 11</p>');
       expect(html).toContain('<p><strong>Spelling:</strong> Spelling Lesson 11</p>');
     });
@@ -233,5 +239,31 @@ describe('FPK compliance', () => {
     expect(result.pass).toBe(true);
     expect(html).toContain('Reading Test 14');
     expect(html).toContain('Thursday');
+  });
+
+  it('renders q4w8 novel study rows with No School handling and the Novel Study label', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading',
+      rows: [
+        { day: 'Monday', type: 'No Class', lesson_num: null, in_class: 'NO SCHOOL', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Monday', type: 'No Class', lesson_num: null, in_class: 'NO SCHOOL', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Spelling', resources: null },
+        { day: 'Tuesday', type: 'Lesson', lesson_num: '138', in_class: 'Reading Lesson 138', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Reading', resources: null },
+        { day: 'Tuesday', type: 'Lesson', lesson_num: null, in_class: 'Novel Study: Because of Winn Dixie: Chapters 1-2', at_home: null, canvas_url: null, canvas_assignment_id: null, object_id: null, subject: 'Spelling', resources: null },
+      ],
+      quarter: 'Q4',
+      weekNum: 8,
+      dateRange: 'May 25–May 29, 2026',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      weekDates: ['2026-05-25', '2026-05-26', '2026-05-27', '2026-05-28', '2026-05-29'],
+      calendarEvents: [
+        { date: '2026-05-25', event_type: 'no_school', label: 'Memorial Day' } as never,
+      ],
+    });
+
+    expect(html).toContain('<p><em>No School</em></p>');
+    expect(html).not.toContain('<p><strong>Reading:</strong> NO SCHOOL</p>');
+    expect(html).toContain('<p><strong>Novel Study:</strong> Because of Winn Dixie: Chapters 1-2</p>');
   });
 });

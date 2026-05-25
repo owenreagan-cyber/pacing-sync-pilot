@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldExcludeResource } from './canvas-html';
+import { generateCanvasPageHtml, shouldExcludeResource } from './canvas-html';
 
 describe('shouldExcludeResource', () => {
   it('excludes Reading workbook lesson PDFs', () => {
@@ -13,5 +13,69 @@ describe('shouldExcludeResource', () => {
   it('does not exclude workbook part resources', () => {
     expect(shouldExcludeResource('Reading Workbook Part 1.pdf')).toBe(false);
     expect(shouldExcludeResource('Reading Workbook Part 2.pdf')).toBe(false);
+  });
+
+  it('renders smart-renamed shared Reading resources for combined pages', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading & Spelling',
+      rows: [
+        {
+          day: 'Tuesday',
+          type: 'Lesson',
+          lesson_num: '138',
+          in_class: 'Reading Lesson 138',
+          at_home: null,
+          canvas_url: null,
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Reading',
+          resources: null,
+        },
+        {
+          day: 'Tuesday',
+          type: 'Lesson',
+          lesson_num: null,
+          in_class: 'Novel Study: Because of Winn Dixie: Chapters 1-2',
+          at_home: null,
+          canvas_url: null,
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Spelling',
+          resources: null,
+        },
+      ],
+      quarter: 'Q4',
+      weekNum: 8,
+      dateRange: 'May 25–May 29, 2026',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: [
+        { subject: 'Reading', lesson_ref: 'Reading_Glossary_A', canonical_name: 'Reading Glossary: Book A.pdf', canvas_url: 'https://x/courses/1/files/gl-a' },
+        { subject: 'Reading', lesson_ref: 'Reading_Glossary_B', canonical_name: 'Reading Glossary: Book B.pdf', canvas_url: 'https://x/courses/1/files/gl-b' },
+        { subject: 'Reading', lesson_ref: 'Reading_Glossary_C', canonical_name: 'Reading Glossary: Book C.pdf', canvas_url: 'https://x/courses/1/files/gl-c' },
+        { subject: 'Reading', lesson_ref: 'Reading_Book_L001', canonical_name: 'Reading Book Lessons 1-25.pdf', canvas_url: 'https://x/courses/1/files/book-001' },
+        { subject: 'Reading', lesson_ref: 'Reading_Book_L026', canonical_name: 'Reading Book Lessons 26-50.pdf', canvas_url: 'https://x/courses/1/files/book-026' },
+        { subject: 'Reading', lesson_ref: 'Reading_Book_L051', canonical_name: 'Reading Book Lessons 51-77.pdf', canvas_url: 'https://x/courses/1/files/book-051' },
+        { subject: 'Reading', lesson_ref: 'Reading_Book_L078', canonical_name: 'Reading Book Lessons 78-105.pdf', canvas_url: 'https://x/courses/1/files/book-078' },
+        { subject: 'Reading', lesson_ref: 'Reading_Book_L106', canonical_name: 'Reading Book Lessons 106-140.pdf', canvas_url: 'https://x/courses/1/files/book-106' },
+        { subject: 'Reading', lesson_ref: 'Reading_Workbook_Part1', canonical_name: 'Workbook Part 1.pdf', canvas_url: 'https://x/courses/1/files/wb-1' },
+        { subject: 'Reading', lesson_ref: 'Reading_Workbook_Part2', canonical_name: 'Workbook Part 2.pdf', canvas_url: 'https://x/courses/1/files/wb-2' },
+        { subject: 'Spelling', lesson_ref: 'Spelling_Master_List', canonical_name: 'Spelling Master Word List.pdf', canvas_url: 'https://x/courses/1/files/sp-master' },
+      ],
+    });
+
+    expect(html).toContain('<strong>Textbooks:</strong>');
+    expect(html).toContain('Glossary A');
+    expect(html).toContain('Glossary B');
+    expect(html).toContain('Glossary C');
+    expect(html).toContain('Reading Textbook Lessons 1-25.pdf');
+    expect(html).toContain('Reading Textbook Lessons 106-140.pdf');
+    expect(html).toContain('<strong>Workbooks:</strong>');
+    expect(html).toContain('R_WB_Part1_L001-077.pdf');
+    expect(html).toContain('Workbook_Part2_L078-140.pdf');
+    expect(html).toContain('<strong>Spelling Master List:</strong>');
+    expect(html).toContain('Spelling Master Word List.pdf');
+    expect(html).not.toContain('Reading Glossary: Book A.pdf');
   });
 });

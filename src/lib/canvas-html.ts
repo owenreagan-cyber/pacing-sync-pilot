@@ -30,6 +30,128 @@ const DAY_BLOCK_IDS: Record<string, string> = {
 
 const DAYS_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
+type FriendlyResourceSpec = {
+  group: string;
+  label: string;
+  matcher: (entry: ContentMapEntry, summary: string) => boolean;
+};
+
+const READING_SHARED_RESOURCE_SPECS: FriendlyResourceSpec[] = [
+  {
+    group: 'Textbooks',
+    label: 'Glossary A',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_glossary_a') ||
+        summary.includes('r_gl_a') ||
+        summary.includes('glossary a') ||
+        summary.includes('glossary book a')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Glossary B',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_glossary_b') ||
+        summary.includes('r_gl_b') ||
+        summary.includes('glossary b') ||
+        summary.includes('glossary book b')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Glossary C',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_glossary_c') ||
+        summary.includes('r_gl_c') ||
+        summary.includes('glossary c') ||
+        summary.includes('glossary book c')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Reading Textbook Lessons 1-25.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_book_l001') ||
+        summary.includes('lessons 1-25') ||
+        summary.includes('lessons 1 25')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Reading Textbook Lessons 26-50.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_book_l026') ||
+        summary.includes('lessons 26-50') ||
+        summary.includes('lessons 26 50')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Reading Textbook Lessons 51-77.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_book_l051') ||
+        summary.includes('lessons 51-77') ||
+        summary.includes('lessons 51 77')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Reading Textbook Lessons 78-105.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_book_l078') ||
+        summary.includes('lessons 78-105') ||
+        summary.includes('lessons 78 105')
+      ),
+  },
+  {
+    group: 'Textbooks',
+    label: 'Reading Textbook Lessons 106-140.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_book_l106') ||
+        summary.includes('lessons 106-140') ||
+        summary.includes('lessons 106 140')
+      ),
+  },
+  {
+    group: 'Workbooks',
+    label: 'R_WB_Part1_L001-077.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_workbook_part1') ||
+        summary.includes('wb_part1') ||
+        summary.includes('workbook part 1')
+      ),
+  },
+  {
+    group: 'Workbooks',
+    label: 'Workbook_Part2_L078-140.pdf',
+    matcher: (entry, summary) =>
+      entry.subject === 'Reading' && (
+        summary.includes('reading_workbook_part2') ||
+        summary.includes('wb_part2') ||
+        summary.includes('workbook part 2')
+      ),
+  },
+  {
+    group: 'Spelling Master List',
+    label: 'Spelling Master Word List.pdf',
+    matcher: (entry, summary) =>
+      (entry.subject === 'Reading' || entry.subject === 'Spelling') && (
+        summary.includes('spelling_master_list') ||
+        summary.includes('spelling master') ||
+        summary.includes('master word list')
+      ),
+  },
+];
+
 export interface RedirectPageParams {
   thisSubject: 'History' | 'Science';
   activeSubject: 'History' | 'Science';
@@ -131,6 +253,48 @@ export function shouldExcludeResource(label: string): boolean {
   if (/^R_SG_008/i.test(label)) return true;
   if (/^R_SG_009\.pdf$/i.test(label)) return true;
   return false;
+}
+
+function normalizeSummary(entry: ContentMapEntry): string {
+  return `${entry.lesson_ref || ''} ${entry.canonical_name || ''}`.toLowerCase();
+}
+
+function isExplicitNoClassRow(row: CanvasPageRow | undefined): boolean {
+  if (!row) return true;
+  return row.type === 'X' || row.type === 'No Class' || row.type === '-' ||
+    (((row.in_class || '').trim() === '') && ((row.type || '').trim() === ''));
+}
+
+function isNovelStudyRow(row: CanvasPageRow | undefined): boolean {
+  const raw = `${row?.in_class || ''} ${row?.at_home || ''}`.toLowerCase();
+  return raw.includes('novel study') || raw.includes('because of winn dixie') || raw.includes('because of winn-dixie');
+}
+
+function stripLeadingLabel(text: string, label: string): string {
+  return text.replace(new RegExp(`^${label}\\s*:\\s*`, 'i'), '').trim();
+}
+
+function collectReadingSharedResources(contentMap: ContentMapEntry[]): Resource[] {
+  const resources: Resource[] = [];
+  const seen = new Set<string>();
+
+  for (const spec of READING_SHARED_RESOURCE_SPECS) {
+    const match = contentMap.find((entry) => {
+      if (!entry.canvas_url) return false;
+      return spec.matcher(entry, normalizeSummary(entry));
+    });
+    if (!match?.canvas_url) continue;
+    const key = `${spec.group}::${spec.label}::${match.canvas_url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resources.push({ group: spec.group, label: spec.label, url: match.canvas_url });
+  }
+
+  return resources;
+}
+
+function resourceDedupKey(resource: Resource): string {
+  return resource.url ? `url::${resource.url}` : `label::${resource.group || ''}::${resource.label}`;
 }
 
 function renderResource(r: Resource & { url?: string | string[] }): string {
@@ -276,6 +440,55 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     return txt;
   };
 
+  const formatAtHomeText = (row: CanvasPageRow | undefined, fallbackText?: string): string => {
+    if (!row) return fallbackText || '';
+    const raw = (row.at_home || '').trim();
+    let txt = raw || fallbackText || '';
+    if (!txt) return '';
+    if (isNovelStudyRow(row)) txt = stripLeadingLabel(txt, 'Novel Study');
+    txt = stripLessonTitle(txt, row.subject);
+    txt = injectFileLinks(txt, contentMap, row.subject);
+    return txt;
+  };
+
+  const buildReadingHomeworkText = (row: CanvasPageRow | undefined): string => {
+    if (!row || isExplicitNoClassRow(row)) return '';
+    if ((row.at_home || '').trim()) return formatAtHomeText(row);
+    const rowType = (row.type || '').toLowerCase();
+    if (row.lesson_num && rowType !== 'test') {
+      return `Lesson ${row.lesson_num} workbook and comprehension questions`;
+    }
+    return '';
+  };
+
+  const buildSpellingHomeworkText = (row: CanvasPageRow | undefined): string => {
+    if (!row || isExplicitNoClassRow(row)) return '';
+    if ((row.at_home || '').trim()) return formatAtHomeText(row);
+    if (isNovelStudyRow(row)) return '';
+    const rowType = (row.type || '').toLowerCase();
+    if (row.lesson_num && rowType !== 'no class' && rowType !== '-') return 'Study Spelling Words';
+    if (rowType === 'lesson' || rowType === 'test' || !rowType) return 'Study Spelling Words';
+    return '';
+  };
+
+  const buildReadingCompanionLine = (row: CanvasPageRow | undefined, lessonNum: string | null | undefined) => {
+    if (!row) {
+      const fallback = findSpellingFallbackText(lessonNum);
+      return fallback ? { label: 'Spelling', text: fallback } : null;
+    }
+    if (isNovelStudyRow(row)) {
+      const raw = stripLeadingLabel(stripLessonTitle(row.in_class || '', row.subject), 'Novel Study');
+      return {
+        label: 'Novel Study',
+        text: injectFileLinks(raw, contentMap, row.subject),
+      };
+    }
+    return {
+      label: 'Spelling',
+      text: formatLessonText(row) || findSpellingFallbackText(lessonNum),
+    };
+  };
+
   parts.push(`<div ${KL_WRAPPER}>`);
   parts.push(`  <div id="kl_banner" class="">`);
   parts.push(`    <h2 ${KL_BANNER_H2}><span ${KL_BANNER_SPAN}>Weekly Agenda</span></h2>`);
@@ -358,12 +571,15 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     }
     parts.push(`    <p>&nbsp;</p>`);
   } else {
-    const mergedResources: Resource[] = [...subjectResources];
-    const seen = new Set(subjectResources.map((r) => `${r.group || ''}::${r.label}::${r.url || ''}`));
+    const mergedResources: Resource[] = [
+      ...subjectResources,
+      ...(isReadingLayout ? collectReadingSharedResources(contentMap) : []),
+    ];
+    const seen = new Set(mergedResources.map((r) => resourceDedupKey(r)));
     for (const row of rows) {
       if (!row.resources) continue;
       for (const r of parseResources(row.resources)) {
-        const key = `${r.group || ''}::${r.label}::${r.url || ''}`;
+        const key = resourceDedupKey(r);
         if (!seen.has(key)) {
           seen.add(key);
           mergedResources.push(r);
@@ -377,7 +593,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
             ...resource,
             group: group.label,
           };
-          const key = `${groupedResource.group || ''}::${groupedResource.label}::${groupedResource.url || ''}`;
+          const key = resourceDedupKey(groupedResource);
           if (!seen.has(key)) {
             seen.add(key);
             mergedResources.push(groupedResource);
@@ -428,6 +644,14 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
       row.type === 'X' || row.type === 'No Class' || row.type === '-' ||
       ((row.in_class || '').trim() === '' && (row.type || '').trim() === '');
 
+    const allNoClass = dayRows.every((candidate) => isExplicitNoClassRow(candidate));
+
+    if (calLabel && allNoClass) {
+      parts.push(`    <p><em>${calLabel}</em></p>`);
+      parts.push(`  </div>`);
+      continue;
+    }
+
     if (explicitNoClass && !calLabel) {
       const label = row.type === 'X' ? 'No School' : 'No Class';
       parts.push(`    <p><em>${label}</em></p>`);
@@ -443,9 +667,28 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 
     if (isReadingLayout) {
       const readingText = formatLessonText(readingRow);
-      const spellingText = formatLessonText(spellingRow) || findSpellingFallbackText(spellingRow?.lesson_num || readingRow?.lesson_num);
-      parts.push(`    <p><strong>Reading:</strong> ${readingText}</p>`);
-      parts.push(`    <p><strong>Spelling:</strong> ${spellingText}</p>`);
+      const companionLine = buildReadingCompanionLine(spellingRow, spellingRow?.lesson_num || readingRow?.lesson_num);
+      const readingHomework = buildReadingHomeworkText(readingRow);
+      const companionHomework = buildSpellingHomeworkText(spellingRow)
+        || (!spellingRow && companionLine?.label === 'Spelling' && companionLine.text ? 'Study Spelling Words' : '');
+
+      parts.push(`    <h4 ${KL_H4}><strong>In Class</strong></h4>`);
+      if (readingText) parts.push(`    <p><strong>Reading:</strong> ${readingText}</p>`);
+      if (companionLine?.text) parts.push(`    <p><strong>${companionLine.label}:</strong> ${companionLine.text}</p>`);
+      parts.push(`    <p>&nbsp;</p>`);
+
+      if (!isFriday && (readingHomework || companionHomework)) {
+        parts.push(`    <h4 ${KL_H4}><strong>At Home</strong></h4>`);
+        if (companionHomework) parts.push(`    <p><strong>${companionLine?.label || 'Spelling'}:</strong> ${companionHomework}</p>`);
+        if (readingHomework) {
+          const readingHomeworkHtml = readingRow?.canvas_url
+            ? `<a title="${readingHomework}" href="${readingRow.canvas_url}" data-course-type="assignments" data-published="true" data-api-endpoint="${readingRow.canvas_url.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${readingHomework}</a>`
+            : readingHomework;
+          parts.push(`    <p><strong>Reading:</strong> ${readingHomeworkHtml}</p>`);
+        }
+        parts.push(`    <p>&nbsp;</p>`);
+      }
+
       if (isFriday && new Set(dayRows.map((r) => r.subject)).size > 1) {
         parts.push(`    <p><em>No homework over the weekend &mdash; enjoy! &#127881;</em></p>`);
       } else if (isFriday) {
@@ -479,8 +722,9 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
         const shouldLink = Boolean(r.canvas_url) && (r.subject === 'Math' || r.subject === 'Reading' || r.subject === 'Spelling');
         const sPfx = hasMultipleSubjectsAH ? `<strong>${r.subject}:</strong> ` : '';
         if (shouldLink) {
+          const canvasUrl = r.canvas_url || '';
           atHomeFragments.push(
-            `    <p>${sPfx}<a title="${txt}" href="${r.canvas_url!}" data-course-type="assignments" data-published="true" data-api-endpoint="${r.canvas_url!.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
+            `    <p>${sPfx}<a title="${txt}" href="${canvasUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${canvasUrl.replace('/courses/', '/api/v1/courses/')}" data-api-returntype="Assignment">${txt}</a></p>`
           );
         } else {
           atHomeFragments.push(`    <p>${sPfx}${txt}</p>`);
