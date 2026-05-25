@@ -9,6 +9,7 @@ import type { AppConfig } from './config';
 import type { PacingCell } from '@/store/useSystemStore';
 import { generateAssignmentTitle, resolveAssignmentGroup } from './assignment-logic';
 import { injectFileLinks, type ContentMapEntry } from './auto-link';
+import { matchMultipleResources } from './content-map-matching';
 import { getCourseId } from './course-ids';
 import { isFridayHomeworkBlocked, FRIDAY_SKIP_REASON } from './friday-rules';
 import { resolve as resolveMemory } from './memory-resolver';
@@ -126,6 +127,25 @@ function buildDescription(
           ? `<p>Complete Lesson <strong>${lessonNum}</strong> ${parityWord}. Show all work.</p>`
           : `<p>Complete Lesson <strong>${lessonNum}</strong>. Show all work.</p>`,
       );
+
+      // Embed textbook and worksheet resource links from content_map
+      if (contentMap.length > 0 && lessonNum) {
+        const resourceGroups = matchMultipleResources(contentMap, 'Math', lessonNum);
+        const textbookResources = resourceGroups.find((g) => g.category === 'textbook')?.resources ?? [];
+        const worksheetResources = resourceGroups.find((g) => g.category === 'worksheet')?.resources ?? [];
+        // Fall back to a general Math_Textbook entry when no lesson-specific entry exists
+        const generalTextbook = contentMap.find((e) => e.lesson_ref === 'Math_Textbook' && e.canvas_url);
+        const textbookUrl = textbookResources[0]?.url || generalTextbook?.canvas_url;
+        const textbookLabel = textbookResources[0]?.label || 'Saxon Math Textbook';
+        if (textbookUrl) {
+          lines.push(`<p>📖 <a href="${textbookUrl}" target="_blank" rel="noopener">${textbookLabel}</a></p>`);
+        }
+        for (const ws of worksheetResources) {
+          if (ws.url) {
+            lines.push(`<p>📄 <a href="${ws.url}" target="_blank" rel="noopener">${ws.label || 'Homework Sheet'}</a></p>`);
+          }
+        }
+      }
     }
   } else if (subject === 'Reading') {
     if (type === 'Test') {
@@ -149,7 +169,22 @@ function buildDescription(
     );
   }
 
-  if (inClass) lines.push(`<p><em>In class:</em> ${inClass}</p>`);
+  if (inClass) {
+    // For Math lessons, link the in-class text to the textbook when available
+    if (subject === 'Math' && !['Test', 'Fact Test', 'Study Guide'].includes(type) && lessonNum && contentMap.length > 0) {
+      const resourceGroups = matchMultipleResources(contentMap, 'Math', lessonNum);
+      const textbookResources = resourceGroups.find((g) => g.category === 'textbook')?.resources ?? [];
+      const generalTextbook = contentMap.find((e) => e.lesson_ref === 'Math_Textbook' && e.canvas_url);
+      const textbookUrl = textbookResources[0]?.url || generalTextbook?.canvas_url;
+      if (textbookUrl) {
+        lines.push(`<p><em>In class:</em> <a href="${textbookUrl}" target="_blank" rel="noopener">${inClass}</a></p>`);
+      } else {
+        lines.push(`<p><em>In class:</em> ${inClass}</p>`);
+      }
+    } else {
+      lines.push(`<p><em>In class:</em> ${inClass}</p>`);
+    }
+  }
   if (atHome) lines.push(`<p><em>At home:</em> ${atHome}</p>`);
 
   let html = lines.join('\n');
