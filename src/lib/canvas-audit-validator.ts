@@ -156,13 +156,14 @@ export function validateAudit(audit: any): Finding[] {
       // 7. Reading must have both labels in In Class blocks
       if (courseName === 'Reading') {
         const allInClass = Object.values(page.in_class_text_per_day || {}).join(' ');
-        if (!/Reading:/i.test(allInClass) || !/Spelling:/i.test(allInClass)) {
+        const hasCompanionLabel = /Spelling:/i.test(allInClass) || /Novel Study:/i.test(allInClass);
+        if (!/Reading:/i.test(allInClass) || !hasCompanionLabel) {
           push({
             severity: 'WARN',
             course: courseName,
             category: 'page',
-            rule: 'Reading page must label Reading: and Spelling: in In Class',
-            expected: 'both labels present',
+            rule: 'Reading page must label Reading: and Spelling:/Novel Study: in In Class',
+            expected: 'Reading plus companion label present',
             actual: allInClass.slice(0, 120),
           });
         }

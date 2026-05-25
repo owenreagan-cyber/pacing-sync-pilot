@@ -76,6 +76,6 @@ export async function loadConfig(): Promise<AppConfig> {
     autoLogic: { ...autoLogic, togetherLogicCourseId: TOGETHER_LOGIC_COURSE_ID },
     canvasBaseUrl: data.canvas_base_url || 'https://thalesacademy.instructure.com',
     adminEmail: data.admin_email || '',
-    morningDigestEmails: (data.morning_digest_emails as string[]) || [],
+    morningDigestEmails: data.morning_digest_emails || [],
   };
 }
