@@ -119,10 +119,30 @@ function atHomeLabel(subject: string): string {
   return subject === 'Math' ? 'Homework' : 'At Home';
 }
 
+/**
+ * Returns true for resource labels that should be suppressed from the UI:
+ *   - "Reading Workbook Lesson NNN.pdf" (individual lesson pages)
+ *   - R_SG_006.pdf, R_SG_007*, R_SG_008*, R_SG_009.pdf
+ */
+function shouldExcludeResource(label: string): boolean {
+  if (/Reading Workbook Lesson \d{3}\.pdf/i.test(label)) return true;
+  if (/^R_SG_006\.pdf$/i.test(label)) return true;
+  if (/^R_SG_007/i.test(label)) return true;
+  if (/^R_SG_008/i.test(label)) return true;
+  if (/^R_SG_009\.pdf$/i.test(label)) return true;
+  return false;
+}
+
 function renderResource(r: Resource & { url?: string | string[] }): string {
   const urls = Array.isArray(r.url) ? r.url.filter(Boolean) : (r.url ? [r.url] : []);
   if (urls.length === 0) return `    <p><strong>${r.label}</strong></p>`;
   return urls.map((rawUrl, index) => {
+    const title = urls.length > 1 ? `${r.label} ${index + 1}` : r.label;
+    // Assignment URLs get Canvas assignment-link markup; file URLs get the file-link markup.
+    if (rawUrl.includes('/assignments/')) {
+      const apiEndpoint = rawUrl.replace('/courses/', '/api/v1/courses/');
+      return `    <p><a title="${title}" href="${rawUrl}" data-course-type="assignments" data-published="true" data-api-endpoint="${apiEndpoint}" data-api-returntype="Assignment">${title}</a></p>`;
+    }
     const clean = rawUrl
       .replace(/\/download\?.*$/, '')
       .replace(/\?wrap=1$/, '');
@@ -130,7 +150,6 @@ function renderResource(r: Resource & { url?: string | string[] }): string {
       /^(https?:\/\/[^/]+)\/courses\/(\d+)\/files\//,
       '$1/api/v1/courses/$2/files/',
     );
-    const title = urls.length > 1 ? `${r.label} ${index + 1}` : r.label;
     return `    <p><a class="instructure_file_link instructure_scribd_file inline_disabled" `
       + `title="${title}" href="${clean}?wrap=1" target="_blank" rel="noopener" `
       + `data-api-endpoint="${apiEndpoint}" data-api-returntype="File">${title}</a></p>`;
@@ -338,11 +357,31 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     }
   }
 
+  // Remove individual lesson workbook pages and blocked study-guide files.
+  // Only "Workbook Part 1.pdf" and "Workbook Part 2.pdf" entries survive.
+  const filteredResources = mergedResources.filter((r) => !shouldExcludeResource(r.label));
+
+  // For Math lessons 117–119, add a "Lesson N Odds" assignment link alongside the textbook.
+  if (subject === 'Math') {
+    const MATH_ODDS_LESSONS = new Set([117, 118, 119]);
+    for (const row of rows) {
+      if (!row.canvas_url) continue;
+      const n = Number.parseInt((row.lesson_num || '').trim(), 10);
+      if (!MATH_ODDS_LESSONS.has(n)) continue;
+      const label = `Lesson ${n} Odds`;
+      const key = `Textbook::${label}::${row.canvas_url}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        filteredResources.push({ label, url: row.canvas_url, group: 'Textbook' });
+      }
+    }
+  }
+
   parts.push(`  <div id="kl_custom_block_5" class="">`);
-  if (mergedResources.length > 0) {
+  if (filteredResources.length > 0) {
     parts.push(`    <h3 ${KL_RESOURCES_H3}>${KL_ICON_QUESTION}Resources&nbsp;</h3>`);
     let currentGroup: string | undefined = undefined;
-    for (const r of mergedResources) {
+    for (const r of filteredResources) {
       if (r.group && r.group !== currentGroup) {
         currentGroup = r.group;
         parts.push(`    <p><strong>${r.group}:</strong></p>`);
