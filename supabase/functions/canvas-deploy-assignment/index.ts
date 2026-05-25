@@ -216,18 +216,34 @@ Deno.serve(async (req) => {
         existingRow.canvas_assignment_id
       ) {
         const existingAssignmentId = String(existingRow.canvas_assignment_id);
+        const healedCanvasUrl =
+          existingRow.canvas_url ||
+          `${canvasBase}/courses/${courseId}/assignments/${existingAssignmentId}`;
+
+        // Heal legacy rows that have assignment_id but no canvas_url so agenda pages can link homework.
+        if (!existingRow.canvas_url) {
+          await sb
+            .from("pacing_rows")
+            .update({
+              canvas_url: healedCanvasUrl,
+              deploy_status: "DEPLOYED",
+              last_deployed: new Date().toISOString(),
+            })
+            .eq("id", rowId);
+        }
+
         await sb.from("deploy_log").insert({
           week_id: weekId || null,
           subject: subject || null,
           action: "assignment_deploy",
           status: "NO_CHANGE",
-          canvas_url: existingRow.canvas_url,
+          canvas_url: healedCanvasUrl,
           message: `Skipped (no change): ${title} [canvas_id:${existingAssignmentId}]`,
         });
         return new Response(JSON.stringify({
           status: "NO_CHANGE",
           assignmentId: existingAssignmentId,
-          canvasUrl: existingRow.canvas_url,
+          canvasUrl: healedCanvasUrl,
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }

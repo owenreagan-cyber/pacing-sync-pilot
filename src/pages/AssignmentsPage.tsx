@@ -53,11 +53,13 @@ interface PreviewRow extends BuiltAssignment {
 }
 
 interface PacingDbRow {
+  id: string;
   subject: string;
   day: string;
   type: string | null;
   lesson_num: string | null;
   canvas_assignment_id: number | null;
+  canvas_url?: string | null;
   content_hash: string | null;
   created_at: string;
 }
@@ -87,7 +89,7 @@ export default function AssignmentsPage() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [contentMap, setContentMap] = useState<ContentMapEntry[]>([]);
   const [pacingDbRows, setPacingDbRows] = useState<PacingDbRow[]>([]);
-  const [_weekId, setWeekId] = useState<string | null>(null);
+  const [weekId, setWeekId] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -138,7 +140,7 @@ export default function AssignmentsPage() {
         if (!data?.id) return;
         supabase
           .from('pacing_rows')
-          .select('subject, day, type, lesson_num, canvas_assignment_id, content_hash, created_at')
+          .select('id, subject, day, type, lesson_num, canvas_assignment_id, canvas_url, content_hash, created_at')
           .eq('week_id', data.id)
           .then(({ data: rows }) => {
             setPacingDbRows((rows as any) || []);
@@ -328,6 +330,13 @@ export default function AssignmentsPage() {
         continue;
       }
       const ov = editOverrides[r.rowKey] || {};
+      const dbRow = pacingDbRows.find(
+        (row) =>
+          row.subject === r.subject &&
+          row.day === r.day &&
+          (row.type || '') === r.type &&
+          (row.lesson_num || '') === r.lessonNum,
+      );
       const res = await callEdge<{ status?: string; canvasUrl?: string; error?: string }>(
         'canvas-deploy-assignment',
         {
@@ -340,7 +349,14 @@ export default function AssignmentsPage() {
           assignmentGroup: r.assignmentGroup,
           dueDate: ov.dueDate ?? r.dueDate ?? undefined,
           omitFromFinal: r.omitFromFinal,
+          existingId: dbRow?.canvas_assignment_id ? String(dbRow.canvas_assignment_id) : undefined,
+          rowId: dbRow?.id,
+          weekId: weekId || undefined,
+          contentHash: r.contentHash,
+          day: r.day,
           type: r.type,
+          isSynthetic: r.isSynthetic,
+          force: forcedRows.has(r.rowKey),
         },
       );
       if (res?.status === 'DEPLOYED' || res?.status === 'NO_CHANGE') {
