@@ -84,6 +84,8 @@ const fakeConfig: AppConfig = {
     togetherLogicCourseId: 0,
   },
   canvasBaseUrl: 'https://example.instructure.com',
+  adminEmail: '',
+  morningDigestEmails: [],
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
