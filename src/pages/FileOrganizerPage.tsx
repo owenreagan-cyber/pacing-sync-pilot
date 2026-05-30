@@ -1147,13 +1147,13 @@ export default function FileOrganizerPage() {
         .from('canvas_orphan_files')
         .update({
           status: 'PENDING',
-          ai_suggested_name: null,
-          ai_suggested_folder: null,
-          ai_lesson_ref: null,
-          ai_resource_type: null,
-          ai_purpose: null,
-          ai_snippet: null,
-          ai_confidence: null,
+          ai_suggested_name: null as string | null,
+          ai_suggested_folder: null as string | null,
+          ai_lesson_ref: null as string | null,
+          ai_resource_type: null as string | null,
+          ai_purpose: null as string[] | null,
+          ai_snippet: null as string | null,
+          ai_confidence: null as number | null,
           updated_at: new Date().toISOString(),
         })
         .eq('canvas_file_id', selected.canvas_file_id);
