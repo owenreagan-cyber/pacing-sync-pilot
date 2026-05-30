@@ -106,7 +106,7 @@ describe('shouldExcludeResource', () => {
     });
 
     expect(html).toContain('<h4 class="kl_solid_border" style="color: #ffffff; background-color: #333333; padding-left: 40px; border-width: 0px; width: 60%;"><strong>Homework</strong></h4>');
-    expect(html).toContain('title="SM 5 Lesson 117 Odds" href="https://x/courses/1/assignments/117"');
+    expect(html).toContain('title="SM5: Lesson 117 Odds" href="https://x/courses/1/assignments/117"');
   });
 
   it('builds assignment links from canvas_assignment_id when canvas_url is missing', () => {
@@ -136,6 +136,6 @@ describe('shouldExcludeResource', () => {
     });
 
     expect(html).toContain('href="https://thalesacademy.instructure.com/courses/21919/assignments/9117"');
-    expect(html).toContain('>RM 4 Lesson 117 Workbook and Comprehension Questions</a>');
+    expect(html).toContain('>RM4: Lesson 117 Workbook and Comprehension Questions</a>');
   });
 });
