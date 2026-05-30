@@ -107,6 +107,15 @@ const _EXECUTE_CHUNK_SIZE = 25;
 const MASS_ORG_CHUNK_SIZE = 5;
 const PAUSE_POLL_MS = 150;
 const UNTITLED_SCAN_PATTERN = /^(untitled|scan)/i;
+type WorkflowSubject = 'math' | 'reading' | 'language_art' | 'history' | 'science';
+const SUBJECT_SEQUENCE: WorkflowSubject[] = ['math', 'reading', 'language_art', 'history', 'science'];
+const SUBJECT_LABELS: Record<WorkflowSubject, string> = {
+  math: 'Math',
+  reading: 'Reading',
+  language_art: 'Language Art',
+  history: 'History',
+  science: 'Science',
+};
 
 function getCurrentPath(row: OrphanFile): string {
   return (row.original_name ?? row.canvas_file_id).trim();
@@ -120,6 +129,25 @@ function getProposedPath(row: OrphanFile): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeSingleLevelFolder(folder: string | null | undefined): string | null {
+  if (!folder) return null;
+  const firstSegment = folder
+    .split(/[\\/]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean)[0];
+  return firstSegment ?? null;
+}
+
+function inferWorkflowSubject(courseLabel: string): WorkflowSubject | null {
+  const value = courseLabel.toLowerCase();
+  if (value.includes('math')) return 'math';
+  if (value.includes('reading')) return 'reading';
+  if (value.includes('language art') || value.includes('language arts') || value.includes('spelling')) return 'language_art';
+  if (value.includes('history')) return 'history';
+  if (value.includes('science')) return 'science';
+  return null;
 }
 
 export default function FileOrganizerPage() {
@@ -167,6 +195,7 @@ export default function FileOrganizerPage() {
   const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
   const [smartWorkflowRunning, setSmartWorkflowRunning] = useState(false);
   const [courseWorkflowRunning, setCourseWorkflowRunning] = useState(false);
+  const [nextSubjectToRun, setNextSubjectToRun] = useState<WorkflowSubject>('math');
   const [smartWorkflowStep, setSmartWorkflowStep] = useState<string>('');
   const [globalSweepProgress, setGlobalSweepProgress] = useState<{
     current: number;
@@ -1343,9 +1372,13 @@ export default function FileOrganizerPage() {
 
   const runCourseExecuteSequential = useCallback(async (rows: OrphanFile[], courseId: string) => {
     if (rows.length === 0) return;
-    const collisions = detectNameCollisions(rows);
+    const normalizedRows = rows.map((row) => ({
+      ...row,
+      ai_suggested_folder: normalizeSingleLevelFolder(row.ai_suggested_folder),
+    }));
+    const collisions = detectNameCollisions(normalizedRows);
     setCollisionIds(collisions);
-    const executableRows = rows.filter((row) => !collisions.has(row.canvas_file_id));
+    const executableRows = normalizedRows.filter((row) => !collisions.has(row.canvas_file_id));
     if (executableRows.length === 0) {
       throw new Error('All files in this course have name collisions; resolve them before live execution.');
     }
@@ -1452,6 +1485,20 @@ export default function FileOrganizerPage() {
     }
 
     const courseLabel = courseLabelById.get(mapperCourseId) ?? `Course ${mapperCourseId}`;
+    const selectedSubject = inferWorkflowSubject(courseLabel);
+    if (!selectedSubject) {
+      toast.error('Selected course subject is not recognized', {
+        description: 'Choose a Math, Reading, Language Art, History, or Science course label.',
+      });
+      return;
+    }
+    if (selectedSubject !== nextSubjectToRun) {
+      toast.error(`Run ${SUBJECT_LABELS[nextSubjectToRun]} first`, {
+        description: `This guided live cleanup runs one subject at a time in order: ${SUBJECT_SEQUENCE.map((subject) => SUBJECT_LABELS[subject]).join(' → ')}.`,
+      });
+      return;
+    }
+
     setCourseWorkflowRunning(true);
     setSmartWorkflowStep('');
     try {
@@ -1497,10 +1544,22 @@ export default function FileOrganizerPage() {
       });
       if (cleanupError) throw cleanupError;
 
+      const currentIndex = SUBJECT_SEQUENCE.indexOf(selectedSubject);
+      const nextSubject = currentIndex >= 0 ? SUBJECT_SEQUENCE[currentIndex + 1] : undefined;
+      if (nextSubject) {
+        setNextSubjectToRun(nextSubject);
+        const nextCourse = courseOptions.find((option) => inferWorkflowSubject(option.label) === nextSubject);
+        if (nextCourse) {
+          setMapperCourseId(nextCourse.value);
+        }
+      }
+
       await loadFiles();
       await loadMapperRows();
       toast.success(`${courseLabel}: live workflow complete`, {
-        description: `Processed one course safely with scan → map → execute → dedupe → cleanup.`,
+        description: nextSubject
+          ? `${SUBJECT_LABELS[selectedSubject]} complete. Next, start ${SUBJECT_LABELS[nextSubject]}.`
+          : 'All guided subjects complete: Math → Reading → Language Art → History → Science.',
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1513,6 +1572,8 @@ export default function FileOrganizerPage() {
     courseWorkflowRunning,
     mapperCourseId,
     isDryRun,
+    nextSubjectToRun,
+    courseOptions,
     courseLabelById,
     scanSingleCourse,
     loadMapperRowsForCourse,
@@ -1922,6 +1983,10 @@ export default function FileOrganizerPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Guided sequence</Label>
+                  <Badge variant="outline">Run next: {SUBJECT_LABELS[nextSubjectToRun]}</Badge>
                 </div>
                 <Button
                   variant="outline"
