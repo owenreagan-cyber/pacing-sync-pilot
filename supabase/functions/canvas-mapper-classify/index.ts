@@ -126,8 +126,27 @@ async function detectDuplicateMatch(
     }
   }
 
+  // Only mark as duplicate if similarity is very high AND resource types match
+  // (prevents blank SG from being marked as duplicate of completed SG)
   if (bestMatchId && bestSimilarity >= 0.92) {
-    return { isDuplicate: true, canonicalFileId: bestMatchId };
+    // Before marking duplicate, verify the candidate has the same resource type
+    const { data: candidate } = await supabase
+      .from("canvas_orphan_files")
+      .select("ai_resource_type, ai_suggested_name")
+      .eq("canvas_file_id", bestMatchId)
+      .maybeSingle();
+    const orphanName = (orphan as unknown as Record<string, unknown>).original_name;
+    const orphanType = (orphan as unknown as Record<string, unknown>).ai_resource_type;
+    const candidateType = candidate?.ai_resource_type;
+    const orphanNameLower = String(orphanName ?? "").toLowerCase();
+    const candidateNameLower = String(candidate?.ai_suggested_name ?? "").toLowerCase();
+    const orphanLooksBlank = /\b(blank|template)\b/.test(orphanNameLower);
+    const candidateLooksBlank = /\b(blank|template)\b/.test(candidateNameLower);
+
+    if (String(orphanType ?? "").trim() === String(candidateType ?? "").trim()
+      && orphanLooksBlank === candidateLooksBlank) {
+      return { isDuplicate: true, canonicalFileId: bestMatchId };
+    }
   }
 
   return { isDuplicate: false, canonicalFileId: null };
@@ -561,7 +580,7 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
           Authorization: `Bearer ${lovableApiKey}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "google/gemini-2.0-flash-001",
           messages: [
             {
               role: "user",
