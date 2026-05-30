@@ -418,13 +418,13 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 
     if (row.subject === 'Math' && !rowType.includes('test')) {
       const parity = lessonNum % 2 === 0 ? 'Evens' : 'Odds';
-      return `SM 5 Lesson ${lessonNum} ${parity}`;
+      return `SM5: Lesson ${lessonNum} ${parity}`;
     }
 
     if (row.subject === 'Reading') {
-      if (rowType.includes('checkout')) return `RM 4 Check Out ${lessonNum}`;
-      if (rowType.includes('test')) return `RM 4 Mastery Test ${lessonNum}`;
-      return `RM 4 Lesson ${lessonNum} Workbook and Comprehension Questions`;
+      if (rowType.includes('checkout')) return `RM4: Check Out ${lessonNum}`;
+      if (rowType.includes('test')) return `RM4: Mastery Test ${lessonNum}`;
+      return `RM4: Lesson ${lessonNum} Workbook and Comprehension Questions`;
     }
 
     return fallbackText;

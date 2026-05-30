@@ -833,6 +833,8 @@ export default function FileOrganizerPage() {
 
       if (emptiedSourceFolders.size > 0) {
         try {
+          // Give Canvas time to update folder counts after file moves
+          await new Promise((resolve) => setTimeout(resolve, 2000));
           const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
             'canvas-cleanup-folders',
             {
@@ -863,6 +865,8 @@ export default function FileOrganizerPage() {
           });
 
           if (hasUntitledScanSource) {
+            // Give Canvas time to update folder counts after file moves
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             const { data: cleanupData, error: cleanupError } = await supabase.functions.invoke(
               'canvas-cleanup-folders',
               { body: { dryRun: false } },
@@ -1404,6 +1408,8 @@ export default function FileOrganizerPage() {
       }
 
       if (emptiedSourceFolders.size > 0) {
+        // Give Canvas time to update folder counts after file moves
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         const { data, error } = await supabase.functions.invoke('canvas-cleanup-folders', {
           body: {
             dryRun: false,
