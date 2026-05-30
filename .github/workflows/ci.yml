@@ -55,19 +55,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Guard: kl_custom_block_7 must never appear in source code
+      - name: Guard - kl_custom_block_7 must never appear in source code
         run: |
-          if grep -R -nF "kl_custom_block_7" src supabase api --exclude-dir=test --exclude-dir=tests --exclude='*.test.ts' --exclude='*.test.tsx'; then
-            echo "❌ Found forbidden token: kl_custom_block_7"
+          if grep -rn "kl_custom_block_7" src/ supabase/ \
+            --exclude="*.test.ts" \
+            --exclude="*.test.tsx" \
+            --exclude-dir=".git" 2>/dev/null; then
+            echo "FAIL: Found forbidden token kl_custom_block_7"
             exit 1
           fi
+          echo "PASS: kl_custom_block_7 not found"
 
-      - name: Guard: assignment deployer must keep on_paper submission type
-        run: grep -nE "submission_types.*on_paper" supabase/functions/canvas-deploy-assignment/index.ts
-
-      - name: Guard: gemini-2.5-flash must be fully eradicated
+      - name: Guard - assignment deployer must keep on_paper submission type
         run: |
-          if grep -R -nF "gemini-2.5-flash" src supabase api; then
-            echo "❌ Found forbidden model token: gemini-2.5-flash"
+          if ! grep -n "submission_types.*on_paper" supabase/functions/canvas-deploy-assignment/index.ts; then
+            echo "FAIL: submission_types on_paper missing from deploy payload"
             exit 1
           fi
+          echo "PASS: on_paper submission type confirmed"
+
+      - name: Guard - gemini-2.5-flash must be fully eradicated
+        run: |
+          if grep -rn "gemini-2.5-flash" src/ supabase/ 2>/dev/null; then
+            echo "FAIL: Found forbidden model gemini-2.5-flash"
+            exit 1
+          fi
+          echo "PASS: gemini-2.5-flash not found"
+
+      - name: Guard - checkout lesson uses multiply-by-10 formula
+        run: |
+          if grep -n "checkoutLesson: rNum\b" src/pages/AnnouncementCenterPage.tsx 2>/dev/null; then
+            echo "FAIL: checkoutLesson not multiplied by 10"
+            exit 1
+          fi
+          echo "PASS: checkout lesson formula correct"
