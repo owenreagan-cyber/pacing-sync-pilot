@@ -152,10 +152,13 @@ function inferWorkflowSubject(courseLabel: string): WorkflowSubject | null {
 
 export default function FileOrganizerPage() {
   const [files, setFiles] = useState<OrphanFile[]>([]);
+  const [approvedFiles, setApprovedFiles] = useState<OrphanFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
+  const [inboxTab, setInboxTab] = useState<'pending' | 'approved'>('pending');
 
   // Local editable fields for the selected file
   const [editName, setEditName] = useState('');
@@ -209,7 +212,11 @@ export default function FileOrganizerPage() {
   const mapperCancelRequestedRef = useRef(false);
   const mapperTableContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = files.find((f) => f.canvas_file_id === selectedId) ?? null;
+  const selected =
+    files.find((f) => f.canvas_file_id === selectedId) ??
+    approvedFiles.find((f) => f.canvas_file_id === selectedId) ??
+    null;
+  const isSelectedApproved = selected?.status === 'APPROVED';
   const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
   const visibleFiles = isBatchMode
     ? paginate(files, currentPage, PAGE_SIZE)
@@ -267,6 +274,19 @@ export default function FileOrganizerPage() {
       setCurrentPage(1);
     }
     setLoading(false);
+  }, []);
+
+  const loadApprovedFiles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('canvas_orphan_files')
+      .select('*')
+      .eq('status', 'APPROVED')
+      .order('updated_at', { ascending: false });
+    if (error) {
+      toast.error('Failed to load approved files', { description: error.message });
+    } else {
+      setApprovedFiles((data ?? []) as OrphanFile[]);
+    }
   }, []);
 
   const loadCourseOptions = useCallback(async () => {
@@ -947,9 +967,10 @@ export default function FileOrganizerPage() {
 
   useEffect(() => {
     void loadFiles();
+    void loadApprovedFiles();
     void loadBatchProgress();
     void loadCourseOptions();
-  }, [loadBatchProgress, loadCourseOptions, loadFiles]);
+  }, [loadApprovedFiles, loadBatchProgress, loadCourseOptions, loadFiles]);
 
   useEffect(() => {
     if (mapperCourseId) {
@@ -1109,11 +1130,46 @@ export default function FileOrganizerPage() {
 
       setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
+      void loadApprovedFiles();
       toast.success('Approved & renamed', { description: editName });
     } catch (e: any) {
       toast.error('Approve failed', { description: e?.message ?? String(e) });
     } finally {
       setApproving(false);
+    }
+  };
+
+  const handleReclassify = async () => {
+    if (!selected) return;
+    setReclassifying(true);
+    try {
+      const { error: updErr } = await supabase
+        .from('canvas_orphan_files')
+        .update({
+          status: 'PENDING',
+          ai_suggested_name: null,
+          ai_suggested_folder: null,
+          ai_lesson_ref: null,
+          ai_resource_type: null,
+          ai_purpose: null,
+          ai_snippet: null,
+          ai_confidence: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('canvas_file_id', selected.canvas_file_id);
+      if (updErr) throw updErr;
+
+      setApprovedFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
+      setSelectedId(null);
+      setInboxTab('pending');
+      void loadFiles();
+      toast.success('Moved back to Pending for re-classification', {
+        description: selected.original_name ?? selected.canvas_file_id,
+      });
+    } catch (e: any) {
+      toast.error('Re-classify failed', { description: e?.message ?? String(e) });
+    } finally {
+      setReclassifying(false);
     }
   };
 
@@ -1603,13 +1659,19 @@ export default function FileOrganizerPage() {
             <Inbox className="h-3 w-3" />
             {files.length} pending
           </Badge>
+          {approvedFiles.length > 0 && (
+            <Badge variant="outline" className="gap-1.5 border-emerald-500 text-emerald-700">
+              <CheckCircle2 className="h-3 w-3" />
+              {approvedFiles.length} approved
+            </Badge>
+          )}
           {duplicateCount > 0 && (
             <Badge variant="destructive" className="gap-1.5">
               <AlertTriangle className="h-3 w-3" />
               {duplicateCount} duplicate{duplicateCount !== 1 ? 's' : ''}
             </Badge>
           )}
-          <Button variant="outline" size="sm" onClick={loadFiles} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => { void loadFiles(); void loadApprovedFiles(); }} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>
           <div className="flex items-center gap-2">
@@ -1728,101 +1790,175 @@ export default function FileOrganizerPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4">
             <Card className="overflow-hidden">
               <CardContent className="p-0">
-                <ScrollArea className="h-[calc(100vh-220px)] min-h-[420px]">
-                  {loading ? (
-                    <div className="p-3 space-y-2">
-                      {Array.from({ length: 6 }).map((_, i) => (
-                        <Skeleton key={i} className="h-14 w-full" />
-                      ))}
-                    </div>
-                  ) : files.length === 0 ? (
-                    <div className="p-8 text-center text-muted-foreground space-y-2">
-                      <CheckCircle2 className="h-8 w-8 mx-auto text-emerald-500" />
-                      <p className="text-sm font-medium">Inbox zero</p>
-                      <p className="text-xs">No pending files to triage.</p>
-                    </div>
-                  ) : (
-                    <div className="p-2 space-y-1.5">
-                      {isBatchMode && (
-                        <div className="px-1 pb-1 text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
-                          Page {currentPage} of {numPages} — showing {visibleFiles.length} of {files.length} files
-                        </div>
+                <Tabs value={inboxTab} onValueChange={(v) => { setInboxTab(v as 'pending' | 'approved'); setSelectedId(null); }} className="flex flex-col h-full">
+                  <TabsList className="w-full rounded-none border-b">
+                    <TabsTrigger value="pending" className="flex-1 text-xs gap-1.5">
+                      <Inbox className="h-3 w-3" />
+                      Pending
+                      {files.length > 0 && (
+                        <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">{files.length}</Badge>
                       )}
-                      {visibleFiles.map((f) => {
-                        const isActive = f.canvas_file_id === selectedId;
-                        return (
-                          <button
-                            key={f.canvas_file_id}
-                            onClick={() => setSelectedId(f.canvas_file_id)}
-                            className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
-                              isActive
-                                ? 'border-primary bg-primary/10'
-                                : String(f.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
-                                  ? 'border-amber-400/70 bg-amber-50 hover:bg-amber-100'
-                                : f.is_duplicate
-                                  ? 'border-destructive/60 bg-destructive/5 hover:bg-destructive/10'
-                                  : 'border-border hover:bg-muted/60'
-                            }`}
-                          >
-                            <div className="flex items-start gap-2">
-                              <FileText className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium truncate">
-                                  {f.original_name || f.canvas_file_id}
-                                </div>
-                                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                                  {f.is_duplicate ? (
-                                    <Badge variant="destructive" className="text-[9px]">
-                                      Duplicate
-                                    </Badge>
-                                  ) : f.ai_suggested_name ? (
-                                    <Badge className="text-[9px] bg-primary/20 text-primary border-primary/30">
-                                      AI ready
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-[9px]">
-                                      pending
-                                    </Badge>
-                                  )}
-                                  {f.course_id && (
-                                    <span className="text-[10px] text-muted-foreground">
-                                      course {f.course_id}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
+                    </TabsTrigger>
+                    <TabsTrigger value="approved" className="flex-1 text-xs gap-1.5">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Approved
+                      {approvedFiles.length > 0 && (
+                        <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">{approvedFiles.length}</Badge>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="pending" className="mt-0 flex-1">
+                    <ScrollArea className="h-[calc(100vh-265px)] min-h-[380px]">
+                      {loading ? (
+                        <div className="p-3 space-y-2">
+                          {Array.from({ length: 6 }).map((_, i) => (
+                            <Skeleton key={i} className="h-14 w-full" />
+                          ))}
+                        </div>
+                      ) : files.length === 0 ? (
+                        <div className="p-8 text-center text-muted-foreground space-y-2">
+                          <CheckCircle2 className="h-8 w-8 mx-auto text-emerald-500" />
+                          <p className="text-sm font-medium">Inbox zero</p>
+                          <p className="text-xs">No pending files to triage.</p>
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-1.5">
+                          {isBatchMode && (
+                            <div className="px-1 pb-1 text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                              Page {currentPage} of {numPages} — showing {visibleFiles.length} of {files.length} files
                             </div>
-                          </button>
-                        );
-                      })}
-                      {isBatchMode && numPages > 1 && (
-                        <div className="flex items-center justify-between pt-2 px-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                            disabled={currentPage <= 1}
-                            className="gap-1 h-7 text-xs"
-                          >
-                            <ChevronLeft className="h-3 w-3" /> Prev
-                          </Button>
-                          <span className="text-[10px] text-muted-foreground">
-                            {currentPage} / {numPages}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-                            disabled={currentPage >= numPages}
-                            className="gap-1 h-7 text-xs"
-                          >
-                            Next <ChevronRight className="h-3 w-3" />
-                          </Button>
+                          )}
+                          {visibleFiles.map((f) => {
+                            const isActive = f.canvas_file_id === selectedId;
+                            return (
+                              <button
+                                key={f.canvas_file_id}
+                                onClick={() => setSelectedId(f.canvas_file_id)}
+                                className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
+                                  isActive
+                                    ? 'border-primary bg-primary/10'
+                                    : String(f.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
+                                      ? 'border-amber-400/70 bg-amber-50 hover:bg-amber-100'
+                                    : f.is_duplicate
+                                      ? 'border-destructive/60 bg-destructive/5 hover:bg-destructive/10'
+                                      : 'border-border hover:bg-muted/60'
+                                }`}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <FileText className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-xs font-medium truncate">
+                                      {f.original_name || f.canvas_file_id}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                      {f.is_duplicate ? (
+                                        <Badge variant="destructive" className="text-[9px]">
+                                          Duplicate
+                                        </Badge>
+                                      ) : f.ai_suggested_name ? (
+                                        <Badge className="text-[9px] bg-primary/20 text-primary border-primary/30">
+                                          AI ready
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="text-[9px]">
+                                          pending
+                                        </Badge>
+                                      )}
+                                      {f.course_id && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          course {f.course_id}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                          {isBatchMode && numPages > 1 && (
+                            <div className="flex items-center justify-between pt-2 px-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage <= 1}
+                                className="gap-1 h-7 text-xs"
+                              >
+                                <ChevronLeft className="h-3 w-3" /> Prev
+                              </Button>
+                              <span className="text-[10px] text-muted-foreground">
+                                {currentPage} / {numPages}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                                disabled={currentPage >= numPages}
+                                className="gap-1 h-7 text-xs"
+                              >
+                                Next <ChevronRight className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
-                  )}
-                </ScrollArea>
+                    </ScrollArea>
+                  </TabsContent>
+
+                  <TabsContent value="approved" className="mt-0 flex-1">
+                    <ScrollArea className="h-[calc(100vh-265px)] min-h-[380px]">
+                      {approvedFiles.length === 0 ? (
+                        <div className="p-8 text-center text-muted-foreground space-y-2">
+                          <Inbox className="h-8 w-8 mx-auto opacity-40" />
+                          <p className="text-sm font-medium">No approved files</p>
+                          <p className="text-xs">Approved files will appear here.</p>
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-1.5">
+                          {approvedFiles.map((f) => {
+                            const isActive = f.canvas_file_id === selectedId;
+                            return (
+                              <button
+                                key={f.canvas_file_id}
+                                onClick={() => setSelectedId(f.canvas_file_id)}
+                                className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
+                                  isActive
+                                    ? 'border-primary bg-primary/10'
+                                    : 'border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100/60'
+                                }`}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-xs font-medium truncate">
+                                      {f.ai_suggested_name || f.original_name || f.canvas_file_id}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                      <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-300">
+                                        approved
+                                      </Badge>
+                                      {f.ai_suggested_folder && (
+                                        <span className="text-[10px] text-muted-foreground truncate">
+                                          {f.ai_suggested_folder}
+                                        </span>
+                                      )}
+                                      {f.course_id && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          course {f.course_id}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
 
@@ -1857,6 +1993,12 @@ export default function FileOrganizerPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
+                      {isSelectedApproved && (
+                        <Badge className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-300 gap-1">
+                          <CheckCircle2 className="h-2.5 w-2.5" />
+                          Approved
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="text-[10px]">
                         File ID: {selected.canvas_file_id}
                       </Badge>
@@ -1932,7 +2074,7 @@ export default function FileOrganizerPage() {
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
-                      {isDryRun && (
+                      {isDryRun && !isSelectedApproved && (
                         <Badge variant="outline" className="self-center text-[10px] gap-1 border-amber-400 text-amber-700">
                           <AlertTriangle className="h-2.5 w-2.5" />
                           Dry Run active — Canvas API blocked
@@ -1941,22 +2083,38 @@ export default function FileOrganizerPage() {
                       <Button
                         variant="outline"
                         onClick={() => setSelectedId(null)}
-                        disabled={approving}
+                        disabled={approving || reclassifying}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        onClick={handleApprove}
-                        disabled={approving || !editName.trim()}
-                        className="gap-1.5"
-                      >
-                        {approving ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        )}
-                        {approving ? 'Approving…' : isDryRun ? 'Log (Dry Run)' : 'Approve & Move'}
-                      </Button>
+                      {isSelectedApproved ? (
+                        <Button
+                          variant="outline"
+                          onClick={handleReclassify}
+                          disabled={reclassifying}
+                          className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
+                        >
+                          {reclassifying ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          {reclassifying ? 'Moving…' : 'Re-classify'}
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={handleApprove}
+                          disabled={approving || !editName.trim()}
+                          className="gap-1.5"
+                        >
+                          {approving ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          )}
+                          {approving ? 'Approving…' : isDryRun ? 'Log (Dry Run)' : 'Approve & Move'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
