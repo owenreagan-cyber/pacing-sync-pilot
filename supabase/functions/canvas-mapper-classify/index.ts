@@ -571,6 +571,26 @@ FILE CONTEXT:
 original_name: "${orphan.original_name ?? ""}"
 file_snippet: "${fileSnippet}"
 
+CANONICAL FOLDER PATHS (use EXACTLY these paths, no variations):
+- Math study guides: "Math/Study Guides"
+- Math lesson workbooks: "Math/Lessons"
+- Math Power Ups: "Math/Power Ups"
+- Math tests: "Math/Tests"
+- Math reteach: "Math/Reteach"
+- Reading/Spelling workbooks: "Reading & Spelling/Workbooks"
+- Reading textbooks and glossaries: "Reading & Spelling/Textbooks"
+- Reading mastery reviews: "Reading & Spelling/Mastery Reviews"
+- Spelling lists: "Reading & Spelling/Spelling"
+- Language Arts textbooks: "Language Arts/Textbooks"
+- Language Arts tests: "Language Arts/Tests"
+- Language Arts study guides: "Language Arts/Study Guides"
+- History materials: "History/[Unit Name]"
+- Science materials: "Science/[Unit Name]"
+- Unknown or low-confidence: "Needs Visual Review"
+
+Never create a folder like "SM5 Materials", "Saxon Math Files", or "Math Resources".
+Always use the exact canonical paths above.
+
 Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
 
       const response = await fetch(AI_URL, {
