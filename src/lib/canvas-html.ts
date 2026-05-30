@@ -267,7 +267,10 @@ function isExplicitNoClassRow(row: CanvasPageRow | undefined): boolean {
 
 function isNovelStudyRow(row: CanvasPageRow | undefined): boolean {
   const raw = `${row?.in_class || ''} ${row?.at_home || ''}`.toLowerCase();
-  return raw.includes('novel study') || raw.includes('because of winn dixie') || raw.includes('because of winn-dixie');
+  return raw.includes('novel study')
+    || raw.includes('because of winn dixie')
+    || raw.includes('because of winn-dixie')
+    || /\bnovel\b/.test(raw);
 }
 
 function stripLeadingLabel(text: string, label: string): string {
@@ -502,6 +505,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
 
   const buildReadingHomeworkText = (row: CanvasPageRow | undefined): string => {
     if (!row || isExplicitNoClassRow(row)) return '';
+    if (isNovelStudyRow(row)) return '';
     if ((row.at_home || '').trim()) return formatAtHomeText(row);
     const rowType = (row.type || '').toLowerCase();
     if (row.lesson_num && rowType !== 'test') {
@@ -527,6 +531,7 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     }
     if (isNovelStudyRow(row)) {
       const raw = stripLeadingLabel(stripLessonTitle(row.in_class || '', row.subject), 'Novel Study');
+      if (!raw || /^novel(\s+study)?$/i.test(raw.trim())) return null;
       return {
         label: 'Novel Study',
         text: injectFileLinks(raw, contentMap, row.subject),
