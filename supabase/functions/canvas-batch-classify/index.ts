@@ -146,7 +146,7 @@ Use the classify_file tool to return your answer.`;
         Authorization: `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.0-flash",
         messages: [
           {
             role: "user",
