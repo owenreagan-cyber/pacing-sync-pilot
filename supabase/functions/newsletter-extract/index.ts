@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     // Branch: polish existing content
     if (action === "polish") {
       const { homeroom_notes, birthdays, sections } = body;
-      const prompt = `You are a friendly elementary school teacher writing a parent newsletter. Polish and rewrite this newsletter content to be warm, engaging, and professional. Keep all factual information but improve tone and readability. Use encouraging language.
+      const prompt = `You are a friendly elementary school teacher writing a parent newsletter. Polish and rewrite this newsletter content to be warm, engaging, and professional. Keep all factual [...]
 
 Homeroom Notes: ${homeroom_notes || "N/A"}
 Birthdays: ${birthdays || "N/A"}
@@ -152,7 +152,7 @@ ${text}`;
         Authorization: `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-1.5-flash",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         tools: [extractTool],
