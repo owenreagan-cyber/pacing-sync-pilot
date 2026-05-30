@@ -59,15 +59,23 @@ async function ensureFolderPath(
     .filter(Boolean);
   if (segments.length === 0) return null;
 
-  const foldersResp = await fetchCanvasWithRetry(
-    `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  if (!foldersResp.ok) return null;
-
-  const folders = await foldersResp.json() as Array<{ id: number; full_name: string }>;
+  const allFolders: Array<{ id: number; full_name: string }> = [];
+  let folderPage = 1;
+  while (true) {
+    const foldersResp = await fetchCanvasWithRetry(
+      `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100&page=${folderPage}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!foldersResp.ok) break;
+    const batch = await foldersResp.json() as Array<{ id: number; full_name: string }>;
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    allFolders.push(...batch);
+    if (batch.length < 100) break;
+    folderPage++;
+    if (folderPage > 20) break; // safety cap
+  }
   const existing = new Map(
-    folders.map((folder) => [folder.full_name.toLowerCase(), folder.id] as const),
+    allFolders.map((folder) => [folder.full_name.toLowerCase(), folder.id] as const),
   );
 
   let parentFolderId: number | null = null;
