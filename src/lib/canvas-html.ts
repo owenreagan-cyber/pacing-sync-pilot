@@ -559,22 +559,23 @@ export function generateCanvasPageHtml(params: CanvasPageParams): string {
     if (Number.isFinite(testNum)) {
       const pad2 = String(testNum).padStart(2, '0');
       const blankStudyGuide = contentMap.find((entry) => {
-        const url = entry.canvas_url || '';
-        if (!url || entry.subject !== 'Math') return false;
-        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
-        const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
-        const matchesTest = matchesLessonNumber(summary, String(testNum));
-        const hasCompletedMarker = /%[^%]*completed[^%]*%/i.test(url);
-        const isBlank = summary.includes('blank') || !hasCompletedMarker;
-        return isStudyGuide && matchesTest && isBlank;
+        if (!entry.canvas_url || entry.subject !== 'Math') return false;
+        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''}`.toLowerCase();
+        const isStudyGuide = summary.includes('sg_') || summary.includes('study') || summary.includes('studyguide');
+        const matchesTest = matchesLessonNumber(summary, String(testNum))
+          || matchesLessonNumber(summary, String(testNum).padStart(2, '0'))
+          || matchesLessonNumber(summary, String(testNum).padStart(3, '0'));
+        const isCompleted = summary.includes('completed') || summary.includes('answer') || summary.includes('_ak');
+        return isStudyGuide && matchesTest && !isCompleted;
       });
       const completedStudyGuide = contentMap.find((entry) => {
-        const url = entry.canvas_url || '';
-        if (!url || entry.subject !== 'Math') return false;
-        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''} ${url}`.toLowerCase();
-        const isStudyGuide = summary.includes('studyguide') || (summary.includes('study') && summary.includes('guide'));
-        const matchesTest = matchesLessonNumber(summary, String(testNum));
-        const isCompleted = /%[^%]*completed[^%]*%/i.test(url);
+        if (!entry.canvas_url || entry.subject !== 'Math') return false;
+        const summary = `${entry.lesson_ref || ''} ${entry.canonical_name || ''}`.toLowerCase();
+        const isStudyGuide = summary.includes('sg_') || summary.includes('study') || summary.includes('studyguide');
+        const matchesTest = matchesLessonNumber(summary, String(testNum))
+          || matchesLessonNumber(summary, String(testNum).padStart(2, '0'))
+          || matchesLessonNumber(summary, String(testNum).padStart(3, '0'));
+        const isCompleted = summary.includes('completed') || summary.includes('answer') || summary.includes('_ak');
         return isStudyGuide && matchesTest && isCompleted;
       });
       if (blankStudyGuide?.canvas_url || completedStudyGuide?.canvas_url) {
