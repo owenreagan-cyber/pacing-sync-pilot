@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import {
   BATCH_MODE_THRESHOLD,
   BATCH_CLASSIFY_JOB_NAME,
@@ -1143,18 +1144,13 @@ export default function FileOrganizerPage() {
     if (!selected) return;
     setReclassifying(true);
     try {
-      const resetForReclassify: Partial<OrphanFile> = {
+      const resetForReclassify = {
         status: 'PENDING',
         ai_suggested_name: null,
         ai_suggested_folder: null,
         ai_lesson_ref: null,
-        ai_purpose: null,
-        ai_snippet: null,
-        ai_resource_type: null,
-        ai_folder_chunked: null,
-        ai_confidence: null,
         updated_at: new Date().toISOString(),
-      };
+      } satisfies TablesUpdate<'canvas_orphan_files'>;
 
       const { error: updErr } = await supabase
         .from('canvas_orphan_files')
