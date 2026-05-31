@@ -1168,22 +1168,20 @@ export default function FileOrganizerPage() {
     }
     setReclassifying(true);
     try {
-      const resetForReclassify: Partial<OrphanFile> = {
-        status: 'PENDING',
-        ai_suggested_name: null,
-        ai_suggested_folder: null,
-        ai_lesson_ref: null,
-        ai_purpose: null,
-        ai_snippet: null,
-        ai_resource_type: null,
-        ai_folder_chunked: null,
-        ai_confidence: null,
-        updated_at: new Date().toISOString(),
-      };
-
       const { error: updErr } = await supabase
         .from('canvas_orphan_files')
-        .update(resetForReclassify)
+        .update({
+          status: 'PENDING',
+          ai_suggested_name: null,
+          ai_suggested_folder: null,
+          ai_lesson_ref: null,
+          ai_purpose: null,
+          ai_snippet: null,
+          ai_resource_type: null,
+          ai_folder_chunked: null,
+          ai_confidence: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq('canvas_file_id', selected.canvas_file_id);
       if (updErr) throw updErr;
 
