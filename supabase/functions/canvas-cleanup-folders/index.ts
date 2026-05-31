@@ -79,16 +79,6 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const dryRun: boolean = body?.dryRun === true;
-    const requestedCourseIds = new Set<number>();
-    const rawCourseIds = Array.isArray(body?.courseIds)
-      ? body.courseIds
-      : body?.courseId !== undefined && body?.courseId !== null
-        ? [body.courseId]
-        : [];
-    for (const raw of rawCourseIds) {
-      const parsed = Number(raw);
-      if (Number.isFinite(parsed) && parsed > 0) requestedCourseIds.add(parsed);
-    }
     const targetFolders: TargetFolder[] = Array.isArray(body?.targetFolders)
       ? body.targetFolders
         .map((item: Partial<TargetFolder>) => ({
