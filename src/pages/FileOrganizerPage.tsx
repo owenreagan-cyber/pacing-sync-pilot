@@ -1150,10 +1150,6 @@ export default function FileOrganizerPage() {
           ai_suggested_name: null,
           ai_suggested_folder: null,
           ai_lesson_ref: null,
-          ai_resource_type: null,
-          ai_purpose: null,
-          ai_snippet: null,
-          ai_confidence: null,
           updated_at: new Date().toISOString(),
         })
         .eq('canvas_file_id', selected.canvas_file_id);
