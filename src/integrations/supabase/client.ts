@@ -2,33 +2,13 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const normalizeEnvValue = (raw?: string) => {
+const normalizeSupabaseKey = (raw?: string) => {
   if (!raw) return '';
-  let value = raw.trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1).trim();
-  }
-  return value;
+  return raw.replace(/^NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=/, '').trim();
 };
 
-const normalizeSupabaseUrl = (raw?: string) =>
-  normalizeEnvValue(raw)
-    .replace(/^VITE_SUPABASE_URL=/, '')
-    .replace(/^NEXT_PUBLIC_SUPABASE_URL=/, '')
-    .trim();
-
-const normalizeSupabaseKey = (raw?: string) =>
-  normalizeEnvValue(raw)
-    .replace(/^VITE_SUPABASE_PUBLISHABLE_KEY=/, '')
-    .replace(/^NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=/, '')
-    .trim();
-
-const SUPABASE_URL = normalizeSupabaseUrl(
-  import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL,
-);
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_PUBLISHABLE_KEY = normalizeSupabaseKey(
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
 );
