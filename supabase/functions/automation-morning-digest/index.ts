@@ -52,11 +52,9 @@ Deno.serve(async (req) => {
   try {
     const today = todayDayName();
 
-    // Resolve recipients: env var takes priority, then fall back to system_config
-    const { data: cfg } = await sb.from('system_config').select('admin_email, morning_digest_emails').eq('id', 'current').single();
+    // Resolve admin email: env var takes priority, then fall back to system_config
+    const { data: cfg } = await sb.from('system_config').select('admin_email').eq('id', 'current').single();
     const ADMIN_EMAIL = Deno.env.get('ADMIN_EMAIL') || (cfg as { admin_email?: string } | null)?.admin_email || 'onboarding@resend.dev';
-    const extraEmails: string[] = (cfg as { morning_digest_emails?: string[] } | null)?.morning_digest_emails ?? [];
-    const recipients = Array.from(new Set([ADMIN_EMAIL, ...extraEmails].filter(Boolean)));
 
     const { data: rows, error } = await sb
       .from('pacing_rows')

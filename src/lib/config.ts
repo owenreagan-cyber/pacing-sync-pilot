@@ -22,7 +22,6 @@ export interface AppConfig {
   autoLogic: AutoLogic;
   canvasBaseUrl: string;
   adminEmail: string;
-  morningDigestEmails: string[];
 }
 
 export const ConfigContext = createContext<AppConfig | null>(null);
@@ -60,7 +59,6 @@ export async function loadConfig(): Promise<AppConfig> {
       },
       canvasBaseUrl: 'https://thalesacademy.instructure.com',
       adminEmail: '',
-      morningDigestEmails: [],
     };
   }
 
@@ -76,6 +74,5 @@ export async function loadConfig(): Promise<AppConfig> {
     autoLogic: { ...autoLogic, togetherLogicCourseId: TOGETHER_LOGIC_COURSE_ID },
     canvasBaseUrl: data.canvas_base_url || 'https://thalesacademy.instructure.com',
     adminEmail: data.admin_email || '',
-    morningDigestEmails: (data.morning_digest_emails as string[]) || [],
   };
 }

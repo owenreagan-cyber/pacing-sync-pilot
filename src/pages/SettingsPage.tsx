@@ -141,17 +141,10 @@ export default function SettingsPage() {
   const config = useConfig();
   const [adminEmail, setAdminEmail] = useState('');
   const [savingEmail, setSavingEmail] = useState(false);
-  const [morningEmails, setMorningEmails] = useState<string[]>([]);
-  const [newMorningEmail, setNewMorningEmail] = useState('');
-  const [savingMorning, setSavingMorning] = useState(false);
 
   useEffect(() => {
     if (config?.adminEmail) setAdminEmail(config.adminEmail);
   }, [config?.adminEmail]);
-
-  useEffect(() => {
-    if (config?.morningDigestEmails) setMorningEmails(config.morningDigestEmails);
-  }, [config?.morningDigestEmails]);
 
   const saveAdminEmail = async () => {
     const trimmed = adminEmail.trim();
@@ -164,30 +157,6 @@ export default function SettingsPage() {
     setSavingEmail(false);
     if (error) { toast.error(error.message); return; }
     toast.success('Admin email saved');
-  };
-
-  const saveMorningEmails = async (emails: string[]) => {
-    setSavingMorning(true);
-    const { error } = await supabase
-      .from('system_config')
-      .update({ morning_digest_emails: emails })
-      .eq('id', 'current');
-    setSavingMorning(false);
-    if (error) { toast.error(error.message); return; }
-    setMorningEmails(emails);
-    toast.success('Morning digest recipients saved');
-  };
-
-  const addMorningEmail = async () => {
-    const trimmed = newMorningEmail.trim().toLowerCase();
-    if (!trimmed || !trimmed.includes('@')) { toast.error('Please enter a valid email address'); return; }
-    if (morningEmails.map((e) => e.toLowerCase()).includes(trimmed)) { toast.error('Email already in list'); return; }
-    setNewMorningEmail('');
-    await saveMorningEmails([...morningEmails, newMorningEmail.trim()]);
-  };
-
-  const removeMorningEmail = async (email: string) => {
-    await saveMorningEmails(morningEmails.filter((e) => e !== email));
   };
 
   return (
@@ -204,7 +173,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Used as the destination for nightly monitor emails.
+              Used as the destination for the Morning Digest and nightly monitor emails.
             </p>
             <div className="flex gap-2">
               <Input
@@ -218,43 +187,6 @@ export default function SettingsPage() {
                 {savingEmail ? 'Saving…' : 'Save'}
               </Button>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Morning Digest Recipients</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Everyone listed here receives the Morning Digest email (Mon–Fri at 5:00 AM ET).
-            </p>
-            <div className="flex gap-2">
-              <Input
-                type="email"
-                placeholder="add@school.org"
-                value={newMorningEmail}
-                onChange={(e) => setNewMorningEmail(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void addMorningEmail(); }}
-                className="max-w-sm"
-                disabled={savingMorning}
-              />
-              <Button onClick={addMorningEmail} disabled={savingMorning} className="gap-1.5">
-                <Plus className="h-4 w-4" /> Add
-              </Button>
-            </div>
-            {morningEmails.length > 0 && (
-              <div className="space-y-1">
-                {morningEmails.map((email) => (
-                  <div key={email} className="flex items-center gap-2 text-sm border border-border rounded-md px-3 py-2">
-                    <span className="flex-1 font-mono text-xs">{email}</span>
-                    <Button variant="ghost" size="icon" onClick={() => removeMorningEmail(email)} disabled={savingMorning} className="h-7 w-7">
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
           </CardContent>
         </Card>
 
