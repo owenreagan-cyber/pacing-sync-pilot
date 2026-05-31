@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 import {
   BATCH_MODE_THRESHOLD,
   BATCH_CLASSIFY_JOB_NAME,
@@ -1168,20 +1169,22 @@ export default function FileOrganizerPage() {
     }
     setReclassifying(true);
     try {
+      type CanvasOrphanFilesUpdate = Database['public']['Tables']['canvas_orphan_files']['Update'];
+      const resetPatch: CanvasOrphanFilesUpdate = {
+        status: 'PENDING',
+        ai_suggested_name: null,
+        ai_suggested_folder: null,
+        ai_lesson_ref: null,
+        ai_purpose: null,
+        ai_snippet: null,
+        ai_resource_type: null,
+        ai_folder_chunked: null,
+        ai_confidence: null,
+        updated_at: new Date().toISOString(),
+      };
       const { error: updErr } = await supabase
         .from('canvas_orphan_files')
-        .update({
-          status: 'PENDING',
-          ai_suggested_name: null,
-          ai_suggested_folder: null,
-          ai_lesson_ref: null,
-          ai_purpose: null,
-          ai_snippet: null,
-          ai_resource_type: null,
-          ai_folder_chunked: null,
-          ai_confidence: null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(resetPatch)
         .eq('canvas_file_id', selected.canvas_file_id);
       if (updErr) throw updErr;
 
