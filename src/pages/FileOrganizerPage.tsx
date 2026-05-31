@@ -217,8 +217,7 @@ export default function FileOrganizerPage() {
     files.find((f) => f.canvas_file_id === selectedId) ??
     approvedFiles.find((f) => f.canvas_file_id === selectedId) ??
     null;
-  const selectedStatus = (selected?.status ?? '').toUpperCase();
-  const isSelectedApproved = selectedStatus === 'APPROVED';
+  const isSelectedApproved = selected?.status === 'APPROVED';
   const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
   const visibleFiles = isBatchMode
     ? paginate(files, currentPage, PAGE_SIZE)
@@ -1151,7 +1150,7 @@ export default function FileOrganizerPage() {
       if (data?.error) throw new Error(data.error);
 
       setSelectedId(null);
-      await Promise.all([loadFiles(), loadApprovedFiles()]);
+      void loadApprovedFiles();
       toast.success('Approved & renamed', { description: editName });
     } catch (e: unknown) {
       toast.error('Approve failed', { description: e instanceof Error ? e.message : String(e) });
@@ -1162,40 +1161,33 @@ export default function FileOrganizerPage() {
 
   const handleReclassify = async () => {
     if (!selected) return;
-    if (approving || reclassifying) return;
-    if ((selected.status ?? '').toUpperCase() !== 'APPROVED') {
-      toast.error('Only approved files can be re-classified');
-      return;
-    }
     setReclassifying(true);
     try {
-      type CanvasOrphanFilesUpdate = Database['public']['Tables']['canvas_orphan_files']['Update'];
-      const resetPatch: CanvasOrphanFilesUpdate = {
-        status: 'PENDING',
-        ai_suggested_name: null,
-        ai_suggested_folder: null,
-        ai_lesson_ref: null,
-        ai_purpose: null,
-        ai_snippet: null,
-        ai_resource_type: null,
-        ai_folder_chunked: null,
-        ai_confidence: null,
-        updated_at: new Date().toISOString(),
-      };
       const { error: updErr } = await supabase
         .from('canvas_orphan_files')
-        .update(resetPatch)
+        .update({
+          status: 'PENDING',
+          ai_suggested_name: null,
+          ai_suggested_folder: null,
+          ai_lesson_ref: null,
+          ai_resource_type: null,
+          ai_purpose: null,
+          ai_snippet: null,
+          ai_confidence: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq('canvas_file_id', selected.canvas_file_id);
       if (updErr) throw updErr;
 
+      setApprovedFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
       setInboxTab('pending');
-      await Promise.all([loadFiles(), loadApprovedFiles()]);
+      void loadFiles();
       toast.success('Moved back to Pending for re-classification', {
         description: selected.original_name ?? selected.canvas_file_id,
       });
-    } catch (e: unknown) {
-      toast.error('Re-classify failed', { description: e instanceof Error ? e.message : String(e) });
+    } catch (e: any) {
+      toast.error('Re-classify failed', { description: e?.message ?? String(e) });
     } finally {
       setReclassifying(false);
     }
@@ -2119,7 +2111,7 @@ export default function FileOrganizerPage() {
                         <Button
                           variant="outline"
                           onClick={handleReclassify}
-                          disabled={reclassifying || approving}
+                          disabled={reclassifying}
                           className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
                         >
                           {reclassifying ? (
@@ -2132,7 +2124,7 @@ export default function FileOrganizerPage() {
                       ) : (
                         <Button
                           onClick={handleApprove}
-                          disabled={approving || reclassifying || !editName.trim()}
+                          disabled={approving || !editName.trim()}
                           className="gap-1.5"
                         >
                           {approving ? (
