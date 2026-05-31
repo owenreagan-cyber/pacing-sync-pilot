@@ -52,6 +52,22 @@ const API_SUBJECT_MAP: Record<string, string> = {
 const SUBJECT_ORDER = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 
+type SavedPacingRow = {
+  subject: string;
+  day: string;
+  in_class: string | null;
+  lesson_num: string | null;
+  type: string | null;
+  hint_override?: HintOverride;
+};
+
+type ApiSubjectValues = Array<string | number | null>;
+type ApiPayload = {
+  dates?: string[];
+  days?: string[];
+  subjects?: Record<string, ApiSubjectValues>;
+};
+
 function formatSavedCellValue(row: {
   in_class: string | null;
   lesson_num: string | null;
@@ -80,14 +96,7 @@ function formatSavedCellValue(row: {
 function buildSavedPacingData(
   month: string,
   week: number,
-  rows: Array<{
-    subject: string;
-    day: string;
-    in_class: string | null;
-    lesson_num: string | null;
-    type: string | null;
-    hint_override?: HintOverride;
-  }>,
+  rows: SavedPacingRow[],
 ): PacingData {
   const dates = getPacingWeekDatesISO(month, week).map((iso) => format(parseISO(iso), 'MMM d'));
   const subjects: Record<string, PacingCell[]> = Object.fromEntries(
@@ -169,7 +178,7 @@ export const useSystemStore = create<SystemState>((set, _get) => ({
 
         if (savedRows && savedRows.length > 0) {
           set({
-            pacingData: buildSavedPacingData(month, week, savedRows as any[]),
+            pacingData: buildSavedPacingData(month, week, savedRows as SavedPacingRow[]),
             isLoading: false,
           });
           return;
@@ -185,8 +194,11 @@ export const useSystemStore = create<SystemState>((set, _get) => ({
         redirect: 'follow',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const raw = await res.json();
-      const payload = raw.data || raw;
+      const raw: unknown = await res.json();
+      const payload: ApiPayload =
+        typeof raw === 'object' && raw !== null && 'data' in raw
+          ? ((raw as { data?: ApiPayload }).data ?? {})
+          : (raw as ApiPayload);
 
       const dates: string[] = payload.dates || [];
       const _days: string[] = payload.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -196,7 +208,7 @@ export const useSystemStore = create<SystemState>((set, _get) => ({
         const subjectName = API_SUBJECT_MAP[apiKey] || apiKey;
         if (!Array.isArray(values)) continue;
 
-        subjects[subjectName] = (values).map((v) => {
+        subjects[subjectName] = values.map((v: string | number | null) => {
           const val = String(v ?? '');
           const lower = val.toLowerCase();
           return {
