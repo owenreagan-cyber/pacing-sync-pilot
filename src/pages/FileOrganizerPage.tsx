@@ -529,12 +529,13 @@ export default function FileOrganizerPage() {
       const parsedCourseId = row.course_id ? Number.parseInt(row.course_id, 10) : null;
 
       return {
-        deployment_mode: 'dry-run',
         action: 'content_mapper_file_rename_move',
         subject: 'File Organizer Content Mapper',
-        course_id: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
         status: 'simulated',
-        metadata: {
+        message: `${oldName} -> ${newName}`,
+        payload: {
+          deployment_mode: 'dry-run',
+          course_id: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
           fileId: row.canvas_file_id,
           oldName,
           newName,
@@ -546,7 +547,7 @@ export default function FileOrganizerPage() {
       };
     });
 
-    const { error } = await supabase.from('dev_canvas_logs').insert(logEntries);
+    const { error } = await supabase.from('deploy_log').insert(logEntries);
     if (error) throw error;
     return logEntries.length;
   }, []);
