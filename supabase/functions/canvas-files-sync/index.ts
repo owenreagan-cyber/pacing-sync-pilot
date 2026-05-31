@@ -408,7 +408,7 @@ Deno.serve(async (req) => {
 
         if (pageFiles.length < 100) break;
         page++;
-        if (page > 20) break; // safety
+        if (page > 50) break; // safety cap: max 5000 files per course
       }
       stats.perCourse[subjectName] = total;
     }
