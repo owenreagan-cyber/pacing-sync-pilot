@@ -126,27 +126,8 @@ async function detectDuplicateMatch(
     }
   }
 
-  // Only mark as duplicate if similarity is very high AND resource types match
-  // (prevents blank SG from being marked as duplicate of completed SG)
   if (bestMatchId && bestSimilarity >= 0.92) {
-    // Before marking duplicate, verify the candidate has the same resource type
-    const { data: candidate } = await supabase
-      .from("canvas_orphan_files")
-      .select("ai_resource_type, ai_suggested_name")
-      .eq("canvas_file_id", bestMatchId)
-      .maybeSingle();
-    const orphanName = (orphan as unknown as Record<string, unknown>).original_name;
-    const orphanType = (orphan as unknown as Record<string, unknown>).ai_resource_type;
-    const candidateType = candidate?.ai_resource_type;
-    const orphanNameLower = String(orphanName ?? "").toLowerCase();
-    const candidateNameLower = String(candidate?.ai_suggested_name ?? "").toLowerCase();
-    const orphanLooksBlank = /\b(blank|template)\b/.test(orphanNameLower);
-    const candidateLooksBlank = /\b(blank|template)\b/.test(candidateNameLower);
-
-    if (String(orphanType ?? "").trim() === String(candidateType ?? "").trim()
-      && orphanLooksBlank === candidateLooksBlank) {
-      return { isDuplicate: true, canonicalFileId: bestMatchId };
-    }
+    return { isDuplicate: true, canonicalFileId: bestMatchId };
   }
 
   return { isDuplicate: false, canonicalFileId: null };
@@ -194,26 +175,19 @@ async function shouldChunkCourseLessons(
     .limit(1000);
 
   let maxLesson = 0;
-  let lessonFileCount = 0;
   for (const row of courseRows ?? []) {
     const source = `${row.original_name ?? ""} ${row.ai_suggested_name ?? ""} ${row.ai_lesson_ref ?? ""}`.trim();
     const lessonNum = parseLessonNumber(source);
-    if (lessonNum) {
-      lessonFileCount += 1;
-      if (lessonNum > maxLesson) {
-        maxLesson = lessonNum;
-      }
+    if (lessonNum && lessonNum > maxLesson) {
+      maxLesson = lessonNum;
     }
   }
 
   const currentLesson = parseLessonNumber(currentFileSource);
   if (currentLesson && currentLesson > maxLesson) {
     maxLesson = currentLesson;
-    lessonFileCount += 1;
   }
-  // Apply Rule of 20: chunk if more than 20 lesson-type files exist in the course,
-  // or if the max lesson number itself exceeds 20.
-  return lessonFileCount > 20 || maxLesson > 20;
+  return maxLesson > 20;
 }
 
 async function bytesToBase64(bytes: Uint8Array): Promise<string> {
@@ -242,36 +216,6 @@ function canonicalizeSuggestedName(name: string, fallback: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
   return normalized || fallback;
-}
-
-function applyManualRenameOverrides(originalName: string, suggestedName: string): string {
-  const original = (originalName || "").trim();
-  const proposed = (suggestedName || "").trim();
-  const source = proposed || original;
-  if (!source) return suggestedName;
-
-  const workbookMatch = source.match(/^reading workbook lesson\s*(\d{1,3})(?:\.pdf)?$/i);
-  if (workbookMatch) {
-    const lesson = workbookMatch[1];
-    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
-    return `Spelling Workbook Lesson ${lesson}${keepPdf ? ".pdf" : ""}`;
-  }
-
-  const compactSource = source.replace(/[\s-]+/g, "_").toUpperCase();
-  const glossaryMap: Record<string, string> = {
-    R_GL_A: "Reading Glossary: Book A",
-    R_GL_B: "Reading Glossary: Book B",
-    R_GL_C: "Reading Glossary: Book C",
-  };
-  const glossaryKey = Object.keys(glossaryMap).find((key) =>
-    compactSource === key || compactSource === `${key}.PDF`
-  );
-  if (glossaryKey) {
-    const keepPdf = /\.pdf$/i.test(source) || /\.pdf$/i.test(original);
-    return `${glossaryMap[glossaryKey]}${keepPdf ? ".pdf" : ""}`;
-  }
-
-  return suggestedName;
 }
 
 function normalizeSnippetText(text: string, max = SNIPPET_MAX_CHARS): string {
@@ -399,29 +343,6 @@ function categorizeFolder(name: string, resourceType: string, purpose: string[])
   return null;
 }
 
-function normalizeSuggestedFolder(rawFolder: string | null | undefined): string | null {
-  const clean = String(rawFolder ?? "").trim();
-  if (!clean) return null;
-  const lower = clean.toLowerCase();
-  const chunkMatch = clean.match(/^(?:lessons?|chapters?)\s*(\d{1,3})\s*[-–]\s*(\d{1,3})$/i);
-  if (chunkMatch) {
-    const label = /^chapter/i.test(clean) ? "Chapters" : "Lessons";
-    return `${label} ${chunkMatch[1]}-${chunkMatch[2]}`;
-  }
-  if (/study\s*guides?|(^|[\s/_-])sg([\s/_-]|$)/i.test(lower)) return "Study Guides";
-  if (/assessments?|tests?|quizzes?/i.test(lower)) return "Assessments";
-  if (/workbooks?|worksheets?|practice|classwork/i.test(lower)) return "Workbooks";
-  if (/textbooks?|reading\s*book|math\s*book/i.test(lower)) return "Textbooks";
-  if (/answer\s*keys?|keys?\b/i.test(lower)) return "Answer Keys";
-  if (/glossar(y|ies)/i.test(lower)) return "Glossaries";
-  if (/power\s*ups?|powerup/i.test(lower)) return "Power Ups";
-  if (/reteach(ing)?/i.test(lower)) return "Reteaching";
-  if (/investigations?/i.test(lower)) return "Investigations";
-  if (/classroom\s*practices?/i.test(lower)) return "Classroom Practices";
-  if (/resources?/i.test(lower)) return "Resources";
-  return "Resources";
-}
-
 function applyFolderRules(
   result: MapperResult,
   originalName: string,
@@ -531,40 +452,28 @@ Deno.serve(async (req) => {
         snippet: normalizeSnippetText(String(orphan.ai_snippet ?? fileContentSnippet ?? displayName)),
         suggestedName: displayName,
         suggestedFolder: orphan.ai_suggested_folder ?? "Already Formatted",
-        confidence: 100,
         alreadyFormatted: true,
       };
+    } else if (!fileContentSnippet) {
+      mapped = fallbackNeedsReview(
+        displayName || orphan.original_name || "",
+        orphan.canvas_file_id,
+        "No readable text extracted from file content.",
+      );
     } else {
-      const fileSnippet = normalizeSnippetText(fileContentSnippet).slice(0, SNIPPET_MAX_CHARS);
-      const prompt = `You are a strict academic librarian for Canvas LMS. Classify the educational file below.
-
-RULE OF 20 — FOLDER CHUNKING:
-If a course folder would contain more than 20 lesson files, you MUST split them into ten-lesson sub-folders:
-  "Lessons 1-10", "Lessons 11-20", "Lessons 21-30", etc.
-Apply this rule whenever the lesson number is known and the course likely has > 20 lessons.
-
-SUBJECT-SPECIFIC NAMING CONVENTIONS (apply strictly):
-- Math files:             suggestedName format → "[SM5]: Lesson N"   (e.g., "[SM5]: Lesson 14")
-- Reading/Spelling files: suggestedName format → "[RM4]: Lesson N"   (e.g., "[RM4]: Lesson 7")
-- ELA files:              suggestedName format → "[ELA4]: Chapter N" (e.g., "[ELA4]: Chapter 3")
-- Other subjects: use the clearest descriptive title without subject codes.
+      const prompt = `You are a strict academic librarian for Canvas.
 
 STRICT FOLDER RULES:
-1. Apply Rule of 20 chunking ("Lessons 1-10", "Lessons 11-20", …) whenever lesson count > 20.
+1. If the course has more than 20 lessons, group lesson files into ten-lesson folders ("Lessons 1-10", "Lessons 11-20", etc.).
 2. ALWAYS place Investigations in "Investigations".
 3. ALWAYS place Tests/Assessments in "Assessments".
-4. ALWAYS place Reteaching materials in "Reteaching".
-5. ALWAYS place Power Ups in "Power Ups".
-6. If unsure, use "Resources" as the absolute fallback.
+4. If a file is a generic "Lesson", route it to the most specific "Lessons X-Y" folder possible.
+5. IF the AI is unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
-- suggestedName: remove version numbers, dates, and vendor noise (e.g., "v2_final", "scan_export").
-- snippet: copy the file_snippet verbatim (≤300 chars).
-- purpose: array of concise category tags.
-- confidence: integer 0–100 reflecting how certain you are about the classification.
-  Use 90–100 when the subject code, lesson number and folder are all unambiguous.
-  Use 50–89 when some context is inferred.
-  Use 0–49 when the file is very ambiguous or unreadable.
+- Friendly Name: remove version numbers, dates, and vendor/noise strings (example: "v2_final", "scan_export", "vendor").
+- snippet must use fileContentSnippet (<=300 chars).
+- purpose must be an array of concise category tags.
 
 FILE CONTEXT:
 original_name: "${orphan.original_name ?? ""}"
@@ -579,7 +488,7 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
           Authorization: `Bearer ${lovableApiKey}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.0-flash-001",
+          model: "google/gemini-2.5-flash",
           messages: [
             {
               role: "user",
@@ -675,6 +584,14 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
       };
     }
 
+    if (duplicateMatch.isDuplicate) {
+      mapped = {
+        ...mapped,
+        purpose: Array.from(new Set([...(mapped.purpose ?? []), "DUPLICATE"])),
+        suggestedFolder: "DUPLICATE",
+      };
+    }
+
     const aiFolderChunked = /\d+\s*-\s*\d+/.test(mapped.suggestedFolder);
 
     await supabase
@@ -686,7 +603,6 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
         ai_suggested_name: mapped.suggestedName,
         ai_suggested_folder: mapped.suggestedFolder,
         ai_folder_chunked: aiFolderChunked,
-        ai_confidence: mapped.confidence,
         file_hash: fileHash,
         is_duplicate: duplicateMatch.isDuplicate,
         canonical_file_id: duplicateMatch.canonicalFileId,
