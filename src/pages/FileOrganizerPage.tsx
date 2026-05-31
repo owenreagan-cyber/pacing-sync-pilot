@@ -573,8 +573,7 @@ export default function FileOrganizerPage() {
       const key = `${courseId}|${folder}|${name}`;
       if (seen.has(key)) {
         collisions.add(row.canvas_file_id);
-        const firstId = seen.get(key);
-        if (firstId) collisions.add(firstId);
+        collisions.add(seen.get(key)!);
       } else {
         seen.set(key, row.canvas_file_id);
       }
@@ -669,7 +668,7 @@ export default function FileOrganizerPage() {
           },
         });
 
-        if (!error && !(data as { error?: string } | null)?.error) {
+        if (!error && !(data as any)?.error) {
           succeededIds.add(String(row.canvas_file_id));
         }
 
@@ -1937,7 +1936,7 @@ export default function FileOrganizerPage() {
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
-                      {isDryRun && !isSelectedApproved && (
+                      {isDryRun && (
                         <Badge variant="outline" className="self-center text-[10px] gap-1 border-amber-400 text-amber-700">
                           <AlertTriangle className="h-2.5 w-2.5" />
                           Dry Run active — Canvas API blocked
@@ -1950,34 +1949,18 @@ export default function FileOrganizerPage() {
                       >
                         Cancel
                       </Button>
-                      {isSelectedApproved ? (
-                        <Button
-                          variant="outline"
-                          onClick={handleReclassify}
-                          disabled={reclassifying}
-                          className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
-                        >
-                          {reclassifying ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          )}
-                          {reclassifying ? 'Moving…' : 'Re-classify'}
-                        </Button>
-                      ) : (
-                        <Button
-                          onClick={handleApprove}
-                          disabled={approving || !editName.trim()}
-                          className="gap-1.5"
-                        >
-                          {approving ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          )}
-                          {approving ? 'Approving…' : isDryRun ? 'Log (Dry Run)' : 'Approve & Move'}
-                        </Button>
-                      )}
+                      <Button
+                        onClick={handleApprove}
+                        disabled={approving || !editName.trim()}
+                        className="gap-1.5"
+                      >
+                        {approving ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        )}
+                        {approving ? 'Approving…' : isDryRun ? 'Log (Dry Run)' : 'Approve & Move'}
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -2088,17 +2071,6 @@ export default function FileOrganizerPage() {
                   )}
                   {massOrganizing ? 'Organizing…' : 'Safe Execute (Mass Organize)'}
                 </Button>
-                <div className="flex items-center gap-2 ml-1 mb-1">
-                  <Switch
-                    id="mapper-dry-run"
-                    checked={isDryRun}
-                    onCheckedChange={setIsDryRun}
-                    disabled={mapperRunning || mapperExecuting || massOrganizing}
-                  />
-                  <Label htmlFor="mapper-dry-run" className="text-xs whitespace-nowrap">
-                    Enable Dry Run (Log Only)
-                  </Label>
-                </div>
                 <div className="flex items-center gap-2 ml-1 mb-1">
                   <Switch
                     id="cleanup-untitled"
@@ -2335,7 +2307,9 @@ export default function FileOrganizerPage() {
                             <TableRow
                               key={row.canvas_file_id}
                               className={
-                                row.status === 'FAILED'
+                                collisionIds.has(row.canvas_file_id)
+                                  ? 'bg-red-50/70'
+                                  : row.status === 'FAILED'
                                   ? 'bg-destructive/5 border-l-2 border-l-destructive'
                                   : String(row.ai_suggested_folder ?? '').trim().toLowerCase() === 'needs visual review'
                                   ? 'bg-amber-50/70'
@@ -2403,7 +2377,12 @@ export default function FileOrganizerPage() {
                                 )}
                               </TableCell>
                               <TableCell>
-                                {row.status === 'FAILED' ? (
+                                {collisionIds.has(row.canvas_file_id) ? (
+                                  <Badge variant="destructive" className="text-[10px] gap-1">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    Collision Detected
+                                  </Badge>
+                                ) : row.status === 'FAILED' ? (
                                   <Badge variant="destructive" className="text-[10px] gap-1">
                                     <AlertTriangle className="h-2.5 w-2.5" />
                                     Failed – Manual Intervention Needed
@@ -2411,7 +2390,7 @@ export default function FileOrganizerPage() {
                                 ) : (
                                   <Button
                                     size="sm"
-                                    onClick={() => executeMapperRow(row)}
+                                    onClick={() => executeMapperRow(row, mapperRows)}
                                     disabled={
                                       mapperRunning ||
                                       mapperExecuting ||
