@@ -551,12 +551,11 @@ SUBJECT-SPECIFIC NAMING CONVENTIONS (apply strictly):
 
 STRICT FOLDER RULES:
 1. Apply Rule of 20 chunking ("Lessons 1-10", "Lessons 11-20", …) whenever lesson count > 20.
-2. NEVER create one-off file-specific folder names.
-3. ALWAYS use one canonical folder bucket: "Textbooks", "Workbooks", "Study Guides", "Assessments", "Answer Keys", "Power Ups", "Reteaching", "Glossaries", "Investigations", "Classroom Practices", or "Resources".
-4. ALWAYS place Tests/Assessments in "Assessments".
-5. ALWAYS place Study Guides in "Study Guides".
-6. ALWAYS place workbook/worksheet/classroom practice files in "Workbooks" unless already mapped to "Classroom Practices".
-7. If unsure, use "Resources" as the absolute fallback.
+2. ALWAYS place Investigations in "Investigations".
+3. ALWAYS place Tests/Assessments in "Assessments".
+4. ALWAYS place Reteaching materials in "Reteaching".
+5. ALWAYS place Power Ups in "Power Ups".
+6. If unsure, use "Resources" as the absolute fallback.
 
 STRICT OUTPUT RULES:
 - suggestedName: remove version numbers, dates, and vendor noise (e.g., "v2_final", "scan_export").
@@ -570,26 +569,6 @@ STRICT OUTPUT RULES:
 FILE CONTEXT:
 original_name: "${orphan.original_name ?? ""}"
 file_snippet: "${fileSnippet}"
-
-CANONICAL FOLDER PATHS (use EXACTLY these paths, no variations):
-- Math study guides: "Math/Study Guides"
-- Math lesson workbooks: "Math/Lessons"
-- Math Power Ups: "Math/Power Ups"
-- Math tests: "Math/Tests"
-- Math reteach: "Math/Reteach"
-- Reading/Spelling workbooks: "Reading & Spelling/Workbooks"
-- Reading textbooks and glossaries: "Reading & Spelling/Textbooks"
-- Reading mastery reviews: "Reading & Spelling/Mastery Reviews"
-- Spelling lists: "Reading & Spelling/Spelling"
-- Language Arts textbooks: "Language Arts/Textbooks"
-- Language Arts tests: "Language Arts/Tests"
-- Language Arts study guides: "Language Arts/Study Guides"
-- History materials: "History/[Unit Name]"
-- Science materials: "Science/[Unit Name]"
-- Unknown or low-confidence: "Needs Visual Review"
-
-Never create a folder like "SM5 Materials", "Saxon Math Files", or "Math Resources".
-Always use the exact canonical paths above.
 
 Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
 
