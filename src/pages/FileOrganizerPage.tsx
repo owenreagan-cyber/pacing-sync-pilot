@@ -216,7 +216,8 @@ export default function FileOrganizerPage() {
     files.find((f) => f.canvas_file_id === selectedId) ??
     approvedFiles.find((f) => f.canvas_file_id === selectedId) ??
     null;
-  const isSelectedApproved = selected?.status === 'APPROVED';
+  const selectedStatus = (selected?.status ?? '').toUpperCase();
+  const isSelectedApproved = selectedStatus === 'APPROVED';
   const isBatchMode = files.length >= BATCH_MODE_THRESHOLD;
   const visibleFiles = isBatchMode
     ? paginate(files, currentPage, PAGE_SIZE)
@@ -1026,6 +1027,21 @@ export default function FileOrganizerPage() {
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!selectedId) return;
+    const inPending = files.some((f) => f.canvas_file_id === selectedId);
+    const inApproved = approvedFiles.some((f) => f.canvas_file_id === selectedId);
+    if (!inPending && !inApproved) {
+      setSelectedId(null);
+      return;
+    }
+    if (inboxTab === 'pending' && !inPending) {
+      setSelectedId(null);
+    } else if (inboxTab === 'approved' && !inApproved) {
+      setSelectedId(null);
+    }
+  }, [approvedFiles, files, inboxTab, selectedId]);
+
   // Task 1: Analyze single file
   const handleAnalyze = async () => {
     if (!selected) return;
@@ -1100,6 +1116,11 @@ export default function FileOrganizerPage() {
 
   const handleApprove = async () => {
     if (!selected) return;
+    if (approving || reclassifying) return;
+    if ((selected.status ?? '').toUpperCase() === 'APPROVED') {
+      toast.error('Selected file is already approved');
+      return;
+    }
     if (!editName.trim()) {
       toast.error('Suggested name is required');
       return;
@@ -1128,9 +1149,8 @@ export default function FileOrganizerPage() {
       if (error) throw error;
       if ((data)?.error) throw new Error((data).error);
 
-      setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
-      void loadApprovedFiles();
+      await Promise.all([loadFiles(), loadApprovedFiles()]);
       toast.success('Approved & renamed', { description: editName });
     } catch (e: any) {
       toast.error('Approve failed', { description: e?.message ?? String(e) });
@@ -1141,6 +1161,11 @@ export default function FileOrganizerPage() {
 
   const handleReclassify = async () => {
     if (!selected) return;
+    if (approving || reclassifying) return;
+    if ((selected.status ?? '').toUpperCase() !== 'APPROVED') {
+      toast.error('Only approved files can be re-classified');
+      return;
+    }
     setReclassifying(true);
     try {
       const { error: updErr } = await supabase
@@ -1150,15 +1175,19 @@ export default function FileOrganizerPage() {
           ai_suggested_name: null,
           ai_suggested_folder: null,
           ai_lesson_ref: null,
+          ai_purpose: null,
+          ai_snippet: null,
+          ai_resource_type: null,
+          ai_folder_chunked: null,
+          ai_confidence: null,
           updated_at: new Date().toISOString(),
         })
         .eq('canvas_file_id', selected.canvas_file_id);
       if (updErr) throw updErr;
 
-      setApprovedFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
       setInboxTab('pending');
-      void loadFiles();
+      await Promise.all([loadFiles(), loadApprovedFiles()]);
       toast.success('Moved back to Pending for re-classification', {
         description: selected.original_name ?? selected.canvas_file_id,
       });
@@ -2087,7 +2116,7 @@ export default function FileOrganizerPage() {
                         <Button
                           variant="outline"
                           onClick={handleReclassify}
-                          disabled={reclassifying}
+                          disabled={reclassifying || approving}
                           className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
                         >
                           {reclassifying ? (
@@ -2100,7 +2129,7 @@ export default function FileOrganizerPage() {
                       ) : (
                         <Button
                           onClick={handleApprove}
-                          disabled={approving || !editName.trim()}
+                          disabled={approving || reclassifying || !editName.trim()}
                           className="gap-1.5"
                         >
                           {approving ? (
@@ -2262,17 +2291,6 @@ export default function FileOrganizerPage() {
                     Also clean other empty Untitled/Scan folders
                   </Label>
                 </div>
-                <div className="flex items-center gap-2 ml-1 mb-1">
-                  <Switch
-                    id="cleanup-untitled"
-                    checked={cleanupUntitled}
-                    onCheckedChange={setCleanupUntitled}
-                    disabled={mapperRunning || mapperExecuting || massOrganizing}
-                  />
-                  <Label htmlFor="cleanup-untitled" className="text-xs whitespace-nowrap">
-                    Auto-delete empty Untitled/Scan folders
-                  </Label>
-                </div>
               </div>
 
               {mapperProgress.total > 0 && (
@@ -2401,58 +2419,6 @@ export default function FileOrganizerPage() {
                                 <Badge variant="destructive" className="text-[9px] gap-1">
                                   <AlertTriangle className="h-2.5 w-2.5" />
                                   Needs Review
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Strategy Preview</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Review Current Path vs Proposed Path before writing any moves to Canvas.
-                  </p>
-                </div>
-                <Badge variant="outline" className="text-[10px]">
-                  {strategyPreviewRows.filter((row) => row.changed).length} change
-                  {strategyPreviewRows.filter((row) => row.changed).length !== 1 ? 's' : ''}
-                </Badge>
-              </div>
-              <div className="max-h-64 overflow-y-auto rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Current Path</TableHead>
-                      <TableHead>Proposed Path</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {strategyPreviewRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={2} className="text-center py-6 text-xs text-muted-foreground">
-                          Load course files to preview strategy.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      strategyPreviewRows.map((row) => (
-                        <TableRow key={`preview-${row.fileId}`}>
-                          <TableCell className="font-mono text-xs break-all">{row.currentPath}</TableCell>
-                          <TableCell className="font-mono text-xs break-all">
-                            <div className="flex items-center gap-2">
-                              <span>{row.proposedPath}</span>
-                              {!row.changed && (
-                                <Badge variant="outline" className="text-[9px]">
-                                  unchanged
                                 </Badge>
                               )}
                             </div>
