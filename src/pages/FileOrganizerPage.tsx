@@ -1092,9 +1092,9 @@ export default function FileOrganizerPage() {
           description: `${result.processed} files processed in this batch`,
         });
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setBatchRunning(false);
-      toast.error('Batch analysis failed', { description: e?.message ?? String(e) });
+      toast.error('Batch analysis failed', { description: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -1126,14 +1126,14 @@ export default function FileOrganizerPage() {
         body: { fileId: selected.canvas_file_id },
       });
       if (error) throw error;
-      if ((data)?.error) throw new Error((data).error);
+      if (data?.error) throw new Error(data.error);
 
       setFiles((prev) => prev.filter((f) => f.canvas_file_id !== selected.canvas_file_id));
       setSelectedId(null);
       void loadApprovedFiles();
       toast.success('Approved & renamed', { description: editName });
-    } catch (e: any) {
-      toast.error('Approve failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Approve failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setApproving(false);
     }
@@ -1169,34 +1169,34 @@ export default function FileOrganizerPage() {
       toast.success('Moved back to Pending for re-classification', {
         description: selected.original_name ?? selected.canvas_file_id,
       });
-    } catch (e: any) {
-      toast.error('Re-classify failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Re-classify failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setReclassifying(false);
     }
   };
 
   // Task 2: Detect duplicates
-  const handleDetectDuplicates = async () => {
+  const handleDetectDuplicates = useCallback(async () => {
     setDetectingDuplicates(true);
     try {
       const { data, error } = await supabase.functions.invoke('canvas-detect-duplicates', {
         body: { deleteDuplicates: false },
       });
       if (error) throw error;
-      if ((data)?.error) throw new Error((data).error);
+      if (data?.error) throw new Error(data.error);
 
       const result = data;
       toast.success(`Found ${result.duplicatesFound} duplicate(s)`, {
         description: 'Duplicate files are now highlighted in red.',
       });
       await loadFiles();
-    } catch (e: any) {
-      toast.error('Duplicate detection failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Duplicate detection failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setDetectingDuplicates(false);
     }
-  };
+  }, [loadFiles]);
 
   // Task 2: Delete duplicates
   const handleDeleteDuplicates = async () => {
@@ -1211,15 +1211,15 @@ export default function FileOrganizerPage() {
         body: { deleteDuplicates: true },
       });
       if (error) throw error;
-      if ((data)?.error) throw new Error((data).error);
+      if (data?.error) throw new Error(data.error);
 
       const result = data;
       toast.success(`Deleted ${result.duplicatesDeleted} duplicate(s)`, {
         description: 'Canonical versions have been preserved.',
       });
       await loadFiles();
-    } catch (e: any) {
-      toast.error('Delete duplicates failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Delete duplicates failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setDeletingDuplicates(false);
     }
@@ -1233,14 +1233,14 @@ export default function FileOrganizerPage() {
         body: { dryRun: false },
       });
       if (error) throw error;
-      if ((data)?.error) throw new Error((data).error);
+      if (data?.error) throw new Error(data.error);
 
       const result = data;
       toast.success(`Cleaned ${result.summary?.foldersDeleted ?? 0} empty folder(s)`, {
         description: `Scanned ${result.summary?.coursesScanned ?? 0} course(s)`,
       });
-    } catch (e: any) {
-      toast.error('Folder cleanup failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Folder cleanup failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setCleaningFolders(false);
     }
@@ -1421,8 +1421,8 @@ export default function FileOrganizerPage() {
       toast.success('Smart workflow complete', {
         description: 'Scan, map, and duplicate detection finished.',
       });
-    } catch (e: any) {
-      toast.error('Smart workflow failed', { description: e?.message ?? String(e) });
+    } catch (e: unknown) {
+      toast.error('Smart workflow failed', { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setSmartWorkflowRunning(false);
       setSmartWorkflowStep('');
