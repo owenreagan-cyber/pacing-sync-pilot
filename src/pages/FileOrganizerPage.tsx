@@ -198,6 +198,8 @@ export default function FileOrganizerPage() {
   const [cleanupUntitled, setCleanupUntitled] = useState(false);
   const [globalSweepRunning, setGlobalSweepRunning] = useState(false);
   const [smartWorkflowRunning, setSmartWorkflowRunning] = useState(false);
+  const [courseWorkflowRunning, setCourseWorkflowRunning] = useState(false);
+  const [nextSubjectToRun, setNextSubjectToRun] = useState<WorkflowSubject>('math');
   const [smartWorkflowStep, setSmartWorkflowStep] = useState<string>('');
   const [globalSweepProgress, setGlobalSweepProgress] = useState<{
     current: number;
@@ -1393,6 +1395,219 @@ export default function FileOrganizerPage() {
       setSmartWorkflowStep('');
     }
   }, [handleDetectDuplicates, handleScanAllCourses, mapAllCoursesSequentially, smartWorkflowRunning]);
+
+  const runCourseExecuteSequential = useCallback(async (rows: OrphanFile[], courseId: string) => {
+    if (rows.length === 0) return;
+    const normalizedRows = rows.map((row) => ({
+      ...row,
+      ai_suggested_folder: normalizeSingleLevelFolder(row.ai_suggested_folder),
+    }));
+    const collisions = detectNameCollisions(normalizedRows);
+    setCollisionIds(collisions);
+    const executableRows = normalizedRows.filter((row) => !collisions.has(row.canvas_file_id));
+    if (executableRows.length === 0) {
+      throw new Error('All files in this course have name collisions; resolve them before live execution.');
+    }
+
+    const succeededIds = new Set<string>();
+    const failedRows: Array<{ fileId: string; error: string }> = [];
+    const emptiedSourceFolders = new Map<string, { courseId: number; folderId: number; folderName: string }>();
+
+    setMassOrganizing(true);
+    setMapperProgressLabel('Live execute (selected course)');
+    setMapperProgress({ current: 0, total: executableRows.length });
+    try {
+      for (let i = 0; i < executableRows.length; i += 1) {
+        const row = executableRows[i];
+        const { data, error } = await supabase.functions.invoke('canvas-mapper-execute', {
+          body: {
+            fileId: row.canvas_file_id,
+            suggestedName: row.ai_suggested_name,
+            suggestedFolder: row.ai_suggested_folder,
+          },
+        });
+        if (error) {
+          failedRows.push({ fileId: row.canvas_file_id, error: error.message });
+        } else {
+          const result = (data as {
+            results?: Array<{
+              ok: boolean;
+              error?: string;
+              sourceFolder?: {
+                courseId: number | null;
+                folderId: number;
+                fullName: string;
+                parentFolderId: number | null;
+                isEmpty: boolean;
+              } | null;
+            }>;
+          })?.results?.[0];
+          if (!result?.ok) {
+            failedRows.push({ fileId: row.canvas_file_id, error: result?.error ?? 'Canvas execution failed' });
+          } else {
+            succeededIds.add(row.canvas_file_id);
+            if (
+              result.sourceFolder?.isEmpty &&
+              result.sourceFolder.courseId !== null &&
+              result.sourceFolder.parentFolderId !== null
+            ) {
+              emptiedSourceFolders.set(
+                `${result.sourceFolder.courseId}:${result.sourceFolder.folderId}`,
+                {
+                  courseId: result.sourceFolder.courseId,
+                  folderId: result.sourceFolder.folderId,
+                  folderName: result.sourceFolder.fullName,
+                },
+              );
+            }
+          }
+        }
+        setMapperProgress({ current: i + 1, total: executableRows.length });
+        if (i < executableRows.length - 1) await sleep(350);
+      }
+
+      if (emptiedSourceFolders.size > 0) {
+        // Give Canvas time to update folder counts after file moves
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const { data, error } = await supabase.functions.invoke('canvas-cleanup-folders', {
+          body: {
+            dryRun: false,
+            courseId,
+            targetFolders: Array.from(emptiedSourceFolders.values()),
+          },
+        });
+        if (error) throw error;
+        if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error);
+      }
+
+      if (succeededIds.size > 0) {
+        setMapperRows((prev) => prev.filter((row) => !succeededIds.has(row.canvas_file_id)));
+        setFiles((prev) => prev.filter((row) => !succeededIds.has(row.canvas_file_id)));
+      }
+      for (const failed of failedRows) {
+        await supabase
+          .from('canvas_orphan_files')
+          .update({ status: 'FAILED', updated_at: new Date().toISOString() })
+          .eq('canvas_file_id', failed.fileId);
+      }
+      if (failedRows.length > 0) {
+        throw new Error(`${failedRows.length} file(s) failed during live execution.`);
+      }
+    } finally {
+      setMassOrganizing(false);
+      setMapperProgress((prev) => (prev.total === prev.current ? prev : { current: 0, total: 0 }));
+    }
+  }, [detectNameCollisions]);
+
+  const handleRunSelectedCourseLiveWorkflow = useCallback(async () => {
+    if (courseWorkflowRunning) return;
+    if (!mapperCourseId) {
+      toast.error('Select a course first');
+      return;
+    }
+    if (isDryRun) {
+      toast.error('Disable Dry Run before executing a live course workflow');
+      return;
+    }
+
+    const courseLabel = courseLabelById.get(mapperCourseId) ?? `Course ${mapperCourseId}`;
+    const selectedSubject = inferWorkflowSubject(courseLabel);
+    if (!selectedSubject) {
+      toast.error('Selected course subject is not recognized', {
+        description: 'Choose a Math, Reading, Language Art, History, or Science course label.',
+      });
+      return;
+    }
+    if (selectedSubject !== nextSubjectToRun) {
+      toast.error(`Run ${SUBJECT_LABELS[nextSubjectToRun]} first`, {
+        description: `This guided live cleanup runs one subject at a time in order: ${SUBJECT_SEQUENCE.map((subject) => SUBJECT_LABELS[subject]).join(' → ')}.`,
+      });
+      return;
+    }
+
+    setCourseWorkflowRunning(true);
+    setSmartWorkflowStep('');
+    try {
+      setSmartWorkflowStep(`Scanning ${courseLabel}`);
+      await scanSingleCourse(mapperCourseId);
+
+      setSmartWorkflowStep(`Loading pending files for ${courseLabel}`);
+      const pendingRows = await loadMapperRowsForCourse(mapperCourseId);
+      setMapperRows(pendingRows);
+      if (pendingRows.length === 0) {
+        toast.success(`${courseLabel}: nothing to process`);
+        await loadFiles();
+        return;
+      }
+
+      setSmartWorkflowStep(`Mapping ${courseLabel}`);
+      await runMapperSequentially(pendingRows, `${courseLabel} mapping complete`);
+
+      setSmartWorkflowStep(`Reloading mapped files for ${courseLabel}`);
+      const mappedRows = await loadMapperRowsForCourse(mapperCourseId);
+      setMapperRows(mappedRows);
+
+      setSmartWorkflowStep(`Executing live rename & move for ${courseLabel}`);
+      await runCourseExecuteSequential(mappedRows, mapperCourseId);
+
+      setSmartWorkflowStep(`Detecting duplicates in ${courseLabel}`);
+      const { data: dedupeResult, error: dedupeError } = await supabase.functions.invoke('canvas-detect-duplicates', {
+        body: { courseId: mapperCourseId, deleteDuplicates: false },
+      });
+      if (dedupeError) throw dedupeError;
+      const duplicatesFound = Number((dedupeResult as { duplicatesFound?: number } | null)?.duplicatesFound ?? 0);
+      if (duplicatesFound > 0) {
+        setSmartWorkflowStep(`Deleting duplicates in ${courseLabel}`);
+        const { error: deleteError } = await supabase.functions.invoke('canvas-detect-duplicates', {
+          body: { courseId: mapperCourseId, deleteDuplicates: true },
+        });
+        if (deleteError) throw deleteError;
+      }
+
+      setSmartWorkflowStep(`Cleaning empty folders in ${courseLabel}`);
+      const { error: cleanupError } = await supabase.functions.invoke('canvas-cleanup-folders', {
+        body: { dryRun: false, courseId: mapperCourseId },
+      });
+      if (cleanupError) throw cleanupError;
+
+      const currentIndex = SUBJECT_SEQUENCE.indexOf(selectedSubject);
+      const nextSubject = currentIndex >= 0 ? SUBJECT_SEQUENCE[currentIndex + 1] : undefined;
+      if (nextSubject) {
+        setNextSubjectToRun(nextSubject);
+        const nextCourse = courseOptions.find((option) => inferWorkflowSubject(option.label) === nextSubject);
+        if (nextCourse) {
+          setMapperCourseId(nextCourse.value);
+        }
+      }
+
+      await loadFiles();
+      await loadMapperRows();
+      toast.success(`${courseLabel}: live workflow complete`, {
+        description: nextSubject
+          ? `${SUBJECT_LABELS[selectedSubject]} complete. Next, start ${SUBJECT_LABELS[nextSubject]}.`
+          : 'All guided subjects complete: Math → Reading → Language Art → History → Science.',
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error('Selected-course live workflow failed', { description: msg });
+    } finally {
+      setCourseWorkflowRunning(false);
+      setSmartWorkflowStep('');
+    }
+  }, [
+    courseWorkflowRunning,
+    mapperCourseId,
+    isDryRun,
+    nextSubjectToRun,
+    courseOptions,
+    courseLabelById,
+    scanSingleCourse,
+    loadMapperRowsForCourse,
+    runMapperSequentially,
+    runCourseExecuteSequential,
+    loadFiles,
+    loadMapperRows,
+  ]);
 
   const duplicateCount = files.filter((f) => f.is_duplicate).length;
   const progressPct =
