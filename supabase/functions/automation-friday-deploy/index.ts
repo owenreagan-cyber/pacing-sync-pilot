@@ -281,6 +281,7 @@ Deno.serve(async (req) => {
             pageTitle: `Newsletter — ${n.date_range ?? 'Latest'}`,
             bodyHtml: n.html_content,
             published: true,
+            setFrontPage: true,
           });
           await sb
             .from('newsletters')
