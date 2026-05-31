@@ -40,7 +40,7 @@ jobs:
     name: "2️⃣ Checkout & File Verification"
     steps:
       - name: "🔄 Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: "📁 List Directory Structure"
         run: |
@@ -61,12 +61,12 @@ jobs:
     name: "3️⃣ Node & Dependency Installation"
     steps:
       - name: "🔄 Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: "📦 Setup Node.js"
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: "📥 Install Dependencies"
@@ -82,12 +82,12 @@ jobs:
     name: "4️⃣ Lint & TypeScript Check"
     steps:
       - name: "🔄 Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: "📦 Setup Node.js"
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: "📥 Install Dependencies"
@@ -108,7 +108,7 @@ jobs:
     name: "5️⃣ Regression Guards"
     steps:
       - name: "🔄 Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: "🚫 Guard: kl_custom_block_7"
         run: |

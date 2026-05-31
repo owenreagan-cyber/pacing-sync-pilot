@@ -126,8 +126,27 @@ async function detectDuplicateMatch(
     }
   }
 
+  // Only mark as duplicate if similarity is very high AND resource types match
+  // (prevents blank SG from being marked as duplicate of completed SG)
   if (bestMatchId && bestSimilarity >= 0.92) {
-    return { isDuplicate: true, canonicalFileId: bestMatchId };
+    // Before marking duplicate, verify the candidate has the same resource type
+    const { data: candidate } = await supabase
+      .from("canvas_orphan_files")
+      .select("ai_resource_type, ai_suggested_name")
+      .eq("canvas_file_id", bestMatchId)
+      .maybeSingle();
+    const orphanName = (orphan as unknown as Record<string, unknown>).original_name;
+    const orphanType = (orphan as unknown as Record<string, unknown>).ai_resource_type;
+    const candidateType = candidate?.ai_resource_type;
+    const orphanNameLower = String(orphanName ?? "").toLowerCase();
+    const candidateNameLower = String(candidate?.ai_suggested_name ?? "").toLowerCase();
+    const orphanLooksBlank = /\b(blank|template)\b/.test(orphanNameLower);
+    const candidateLooksBlank = /\b(blank|template)\b/.test(candidateNameLower);
+
+    if (String(orphanType ?? "").trim() === String(candidateType ?? "").trim()
+      && orphanLooksBlank === candidateLooksBlank) {
+      return { isDuplicate: true, canonicalFileId: bestMatchId };
+    }
   }
 
   return { isDuplicate: false, canonicalFileId: null };
@@ -552,6 +571,26 @@ FILE CONTEXT:
 original_name: "${orphan.original_name ?? ""}"
 file_snippet: "${fileSnippet}"
 
+CANONICAL FOLDER PATHS (use EXACTLY these paths, no variations):
+- Math study guides: "Math/Study Guides"
+- Math lesson workbooks: "Math/Lessons"
+- Math Power Ups: "Math/Power Ups"
+- Math tests: "Math/Tests"
+- Math reteach: "Math/Reteach"
+- Reading/Spelling workbooks: "Reading & Spelling/Workbooks"
+- Reading textbooks and glossaries: "Reading & Spelling/Textbooks"
+- Reading mastery reviews: "Reading & Spelling/Mastery Reviews"
+- Spelling lists: "Reading & Spelling/Spelling"
+- Language Arts textbooks: "Language Arts/Textbooks"
+- Language Arts tests: "Language Arts/Tests"
+- Language Arts study guides: "Language Arts/Study Guides"
+- History materials: "History/[Unit Name]"
+- Science materials: "Science/[Unit Name]"
+- Unknown or low-confidence: "Needs Visual Review"
+
+Never create a folder like "SM5 Materials", "Saxon Math Files", or "Math Resources".
+Always use the exact canonical paths above.
+
 Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
 
       const response = await fetch(AI_URL, {
@@ -561,7 +600,7 @@ Use the classify_mapper_file tool. Output MUST match the schema exactly.`;
           Authorization: `Bearer ${lovableApiKey}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "google/gemini-2.0-flash-001",
           messages: [
             {
               role: "user",

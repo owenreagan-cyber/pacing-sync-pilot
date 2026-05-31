@@ -163,7 +163,7 @@ Use the classify_file tool to return your answer.`;
           Authorization: `Bearer ${lovableApiKey}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash-lite",
+          model: "google/gemini-2.0-flash",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
           tools: [classifyTool],

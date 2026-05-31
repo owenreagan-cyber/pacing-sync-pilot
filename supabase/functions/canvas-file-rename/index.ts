@@ -59,15 +59,23 @@ async function ensureFolderPath(
     .filter(Boolean);
   if (segments.length === 0) return null;
 
-  const foldersResp = await fetchCanvasWithRetry(
-    `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  if (!foldersResp.ok) return null;
-
-  const folders = await foldersResp.json() as Array<{ id: number; full_name: string }>;
+  const allFolders: Array<{ id: number; full_name: string }> = [];
+  let folderPage = 1;
+  while (true) {
+    const foldersResp = await fetchCanvasWithRetry(
+      `${baseUrl}/api/v1/courses/${courseId}/folders?per_page=100&page=${folderPage}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!foldersResp.ok) break;
+    const batch = await foldersResp.json() as Array<{ id: number; full_name: string }>;
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    allFolders.push(...batch);
+    if (batch.length < 100) break;
+    folderPage++;
+    if (folderPage > 20) break; // safety cap
+  }
   const existing = new Map(
-    folders.map((folder) => [folder.full_name.toLowerCase(), folder.id] as const),
+    allFolders.map((folder) => [folder.full_name.toLowerCase(), folder.id] as const),
   );
 
   let parentFolderId: number | null = null;
@@ -202,7 +210,17 @@ Deno.serve(async (req) => {
         .select("course_ids")
         .eq("id", "current")
         .maybeSingle();
-      const subject = inferSubjectFromCourse(cfg?.course_ids ?? {}, row.course_id ?? "");
+      let subject = inferSubjectFromCourse(cfg?.course_ids ?? {}, row.course_id ?? "");
+      // Fallback: infer subject from lesson ref prefix if course ID lookup failed
+      if (!subject && row.ai_lesson_ref) {
+        const ref = (row.ai_lesson_ref || "").toUpperCase();
+        if (ref.startsWith("M_") || ref.startsWith("SM5") || /^SG\d|^T\d/.test(ref)) subject = "Math";
+        else if (ref.startsWith("RM4") || ref.startsWith("R_") || ref.startsWith("WB")) subject = "Reading";
+        else if (ref.startsWith("SP") || ref.startsWith("SPELL")) subject = "Spelling";
+        else if (ref.startsWith("ELA") || ref.startsWith("LA_") || ref.startsWith("CH")) subject = "Language Arts";
+        else if (ref.startsWith("HIST") || ref.startsWith("EP_")) subject = "History";
+        else if (ref.startsWith("SCI") || ref.startsWith("SC_")) subject = "Science";
+      }
       const type = inferTypeFromRef(row.ai_lesson_ref);
       if (subject) {
         await supabase.from("content_map").upsert(

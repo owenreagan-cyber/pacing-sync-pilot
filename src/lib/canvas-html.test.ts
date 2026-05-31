@@ -138,4 +138,48 @@ describe('shouldExcludeResource', () => {
     expect(html).toContain('href="https://thalesacademy.instructure.com/courses/21919/assignments/9117"');
     expect(html).toContain('>RM4: Lesson 117 Workbook and Comprehension Questions</a>');
   });
+
+  it('treats plain NOVEL rows as reading-only novel study content', () => {
+    const html = generateCanvasPageHtml({
+      subject: 'Reading',
+      rows: [
+        {
+          day: 'Monday',
+          type: 'Lesson',
+          lesson_num: '5',
+          in_class: 'NOVEL 5-7',
+          at_home: null,
+          canvas_url: null,
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Reading',
+          resources: null,
+        },
+        {
+          day: 'Monday',
+          type: 'Lesson',
+          lesson_num: null,
+          in_class: 'NOVEL',
+          at_home: null,
+          canvas_url: null,
+          canvas_assignment_id: null,
+          object_id: null,
+          subject: 'Spelling',
+          resources: null,
+        },
+      ],
+      quarter: 'Q4',
+      weekNum: 9,
+      dateRange: 'Jun 1–Jun 5, 2026',
+      subjectReminder: '',
+      subjectResources: [],
+      quarterColor: '#0065a7',
+      contentMap: [],
+    });
+
+    expect(html).toContain('<p><strong>Reading:</strong> NOVEL 5-7</p>');
+    expect(html).not.toContain('<p><strong>Spelling:</strong> NOVEL</p>');
+    expect(html).not.toContain('Study Spelling Words');
+    expect(html).not.toContain('Lesson 5 workbook and comprehension questions');
+  });
 });
