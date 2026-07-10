@@ -14,6 +14,7 @@ import {
 import PasteImportDialog from '@/components/PasteImportDialog';
 import { DaySubjectCard } from '@/components/pacing/DaySubjectCard';
 import { PacingEntryHeader } from '@/components/pacing-entry/PacingEntryHeader';
+import { ResourceCoveragePanel } from '@/components/pacing-entry/ResourceCoveragePanel';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useConfig } from '@/lib/config';
