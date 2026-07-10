@@ -14,6 +14,7 @@ import {
 import PasteImportDialog from '@/components/PasteImportDialog';
 import { DaySubjectCard } from '@/components/pacing/DaySubjectCard';
 import { PacingEntryHeader } from '@/components/pacing-entry/PacingEntryHeader';
+import { ResourceCoveragePanel } from '@/components/pacing-entry/ResourceCoveragePanel';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useConfig } from '@/lib/config';
@@ -617,6 +618,22 @@ export default function PacingEntryPage({
   );
   useEffect(() => { setSmartOpen(!gridHasData); }, [gridHasData]);
 
+  // Flattened row list for the resource coverage panel. Coverage only needs
+  // subject/day/type/lesson_num — no need to persist first.
+  const coverageRows = useMemo(
+    () =>
+      SUBJECTS.flatMap((subj) =>
+        DAYS.map((day) => ({
+          subject: subj,
+          day,
+          type: weekData[subj][day].type || null,
+          lesson_num: weekData[subj][day].lesson_num || null,
+        })),
+      ),
+    [weekData],
+  );
+
+
   const isSaved =
     savedWeeks.some((w) => w.quarter === activeQuarter && w.week_num === activeWeek) && !isDirty;
 
@@ -950,6 +967,14 @@ export default function PacingEntryPage({
           </button>
         </div>
       )}
+
+      <ResourceCoveragePanel
+        rows={coverageRows}
+        contentMap={contentMap}
+        onMapped={loadContentMap}
+      />
+
+
 
       {/* ───────────────────────────────────────── */}
       {/* SECTION C: Subject-by-Subject Wizard       */}
