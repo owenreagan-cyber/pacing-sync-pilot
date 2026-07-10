@@ -35,7 +35,7 @@ interface AssignmentDraftRow {
   lesson_num: string | null;
   is_synthetic?: boolean | null;
   create_assign?: boolean | null;
-  canvas_assignment_id?: number | null;
+  canvas_assignment_id?: number | string | null;
   content_hash?: string | null;
 }
 
