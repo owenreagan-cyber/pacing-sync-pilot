@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { callEdge } from '@/lib/edge';
 import { useSystemStore } from '@/store/useSystemStore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +18,11 @@ import { AssignmentsStepPanel } from '@/components/deployment-wizard/Assignments
 import { CanvasPagesStepPanel } from '@/components/deployment-wizard/CanvasPagesStepPanel';
 import { AnnouncementsStepPanel } from '@/components/deployment-wizard/AnnouncementsStepPanel';
 import type { StepContract, StepRunSummary, StepStatus } from '@/components/deployment-wizard/types';
+import {
+  assignmentPlan,
+  announcementPlan,
+  type PacingRowLike,
+} from '@/lib/pacing';
 
 type StepNumber = 1 | 2 | 3 | 4;
 type DraftEntity = 'assignment' | 'page' | 'announcement';
