@@ -197,43 +197,130 @@ export default function DeploymentWizard() {
       return { valid: true };
     };
 
+    // Row shape → selector shape. `assignments` already contains the fields
+    // `assignmentPlan` needs (subject/day/type/lesson_num/is_synthetic/create_assign).
+    const rowsForPlan: PacingRowLike[] = assignments.map((r) => ({
+      id: r.id,
+      subject: r.subject,
+      day: r.day,
+      type: r.type,
+      lesson_num: r.lesson_num,
+      is_synthetic: r.is_synthetic ?? false,
+      create_assign: r.create_assign ?? true,
+    }));
+
     return {
       1: {
         load: refreshWeekData,
         validate: baseValidate,
-        buildPreview: async () => ({ message: 'File organization context loaded.', generated: assignments.length }),
-        deploySelected: async () => ({ message: 'File mapping approved.', deployed: assignments.length }),
+        buildPreview: async () => ({
+          message: `File organization context loaded. ${assignments.length} pacing rows on file.`,
+          generated: assignments.length,
+        }),
+        deploySelected: async () => ({
+          message: 'File mapping approved — advance to build assignments.',
+          deployed: 0,
+        }),
         hasPendingChanges: hasPendingByStep[1],
         lastRunSummary: stepSummary[1],
       },
       2: {
         load: refreshWeekData,
         validate: baseValidate,
-        buildPreview: async () => ({ message: 'Assignment preview prepared.', generated: assignments.length }),
-        deploySelected: async () => ({
-          message: 'Assignments deployed from review queue.',
-          deployed: assignments.length,
-          edited: Object.keys(draftEdits.assignment).length,
-        }),
+        buildPreview: async () => {
+          const plan = assignmentPlan(rowsForPlan);
+          const willDeploy = plan.filter((p) => p.willDeploy).length;
+          const skipped = plan.length - willDeploy;
+          return {
+            message: `Assignment plan: ${willDeploy} to deploy, ${skipped} skipped by rules.`,
+            generated: willDeploy,
+          };
+        },
+        // Real deploy — iterate every willDeploy row and hit the edge function.
+        // The edge function re-validates against pacing_rows and enforces the
+        // same rule set, so we send the row id + week id and let it reject
+        // anything that violates the trigger.
+        deploySelected: async () => {
+          const plan = assignmentPlan(rowsForPlan).filter((p) => p.willDeploy);
+          let deployed = 0;
+          let blocked = 0;
+          let errors = 0;
+          for (const item of plan) {
+            if (!item.rowId) continue;
+            try {
+              const res = await callEdge<{ status?: string; error?: string }>(
+                'canvas-deploy-assignment',
+                {
+                  rowId: item.rowId,
+                  weekId: weekId ?? undefined,
+                  subject: item.subject,
+                  day: item.day,
+                  type: item.type,
+                  force: false,
+                },
+              );
+              if (res?.status === 'BLOCKED') blocked += 1;
+              else if (res?.status === 'DEPLOYED' || res?.status === 'NO_CHANGE') deployed += 1;
+              else errors += 1;
+            } catch (e) {
+              errors += 1;
+              console.error('[wizard step 2] deploy failed', item.rowId, e);
+            }
+          }
+          return {
+            message: `Deployed ${deployed} · blocked ${blocked} · errors ${errors}.`,
+            deployed,
+            edited: Object.keys(draftEdits.assignment).length,
+            errors,
+          };
+        },
         hasPendingChanges: hasPendingByStep[2],
         lastRunSummary: stepSummary[2],
       },
       3: {
         load: refreshWeekData,
         validate: baseValidate,
-        buildPreview: async () => ({ message: 'Canvas page previews built.', generated: SUBJECT_PAGE_KEYS.length }),
-        deploySelected: async () => ({
-          message: 'Canvas pages deployed.',
-          deployed: SUBJECT_PAGE_KEYS.length,
-          edited: Object.keys(draftEdits.page).length,
-        }),
+        // Attestation-style contract: Canvas page deploy lives in Page Builder
+        // (it needs the full HTML + FPK validation). Here we count subjects
+        // that actually have rows and confirm the deploy log recorded each one.
+        buildPreview: async () => {
+          const subjectsWithRows = new Set(assignments.map((r) => r.subject));
+          const applicable = SUBJECT_PAGE_KEYS.filter(
+            (s) => subjectsWithRows.has(s) || s === 'Homeroom' || s === 'Reading',
+          );
+          return {
+            message: `Canvas pages: ${applicable.length} subjects ready to build.`,
+            generated: applicable.length,
+          };
+        },
+        deploySelected: async () => {
+          const deployedSubjects = SUBJECT_PAGE_KEYS.filter(
+            (s) => pageDeployStatus[s] === 'DEPLOYED',
+          );
+          const missing = SUBJECT_PAGE_KEYS.filter((s) => !deployedSubjects.includes(s));
+          return {
+            message:
+              missing.length === 0
+                ? 'All Canvas pages deployed for this week.'
+                : `${deployedSubjects.length}/${SUBJECT_PAGE_KEYS.length} pages deployed. Open Page Builder to deploy: ${missing.join(', ')}.`,
+            deployed: deployedSubjects.length,
+            edited: Object.keys(draftEdits.page).length,
+            errors: missing.length,
+          };
+        },
         hasPendingChanges: hasPendingByStep[3],
         lastRunSummary: stepSummary[3],
       },
       4: {
         load: refreshWeekData,
         validate: baseValidate,
-        buildPreview: async () => ({ message: 'Announcement schedule prepared.', generated: announcements.length }),
+        buildPreview: async () => {
+          const testCount = announcementPlan(rowsForPlan).length;
+          return {
+            message: `Announcements: ${announcements.length} drafts on file (${testCount} test-driven reminders).`,
+            generated: announcements.length,
+          };
+        },
         deploySelected: async () => {
           let edited = 0;
           const updates = Object.entries(draftEdits.announcement);
@@ -259,17 +346,20 @@ export default function DeploymentWizard() {
       },
     };
   }, [
-    assignments.length,
+    assignments,
     announcements.length,
     draftEdits.announcement,
     draftEdits.assignment,
     draftEdits.page,
     hasPendingByStep,
+    pageDeployStatus,
     refreshWeekData,
     selectedMonth,
     selectedWeek,
     stepSummary,
+    weekId,
   ]);
+
 
   const setStepState = (step: StepNumber, status: StepStatus, summary?: StepRunSummary) => {
     setStepStatus((prev) => ({ ...prev, [step]: status }));
