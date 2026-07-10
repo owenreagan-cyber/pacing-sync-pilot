@@ -38,22 +38,8 @@ import {
 } from '@/lib/pacing';
 
 
-const SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 const SCHOOL_YEAR = '2025-2026';
 
-const SUBJECT_TYPES: Record<string, string[]> = {
-  Math:            ['Lesson', 'Investigation', 'Test', 'Fact Test', 'Study Guide', 'CLT Testing', 'No Class', '-'],
-  Reading:         ['Lesson', 'Test', 'Checkout', 'CLT Testing', 'No Class', '-'],
-  Spelling:        ['Lesson', 'Test', 'CLT Testing', 'No Class', '-'],
-  'Language Arts': ['Lesson', 'CP', 'Test', 'CLT Testing', 'No Class', '-'],
-  History:         ['Lesson', 'Test', 'CLT Testing', 'No Class', '-'],
-  Science:         ['Lesson', 'Test', 'CLT Testing', 'No Class', '-'],
-};
-
-const LA_ASSIGNABLE_TYPES = new Set(['CP', 'Classroom Practice', 'Test']);
-const isLanguageArtsAssignable = (type: string | null | undefined) =>
-  LA_ASSIGNABLE_TYPES.has(type ?? '');
 
 function addDaysIso(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);
@@ -72,18 +58,6 @@ function fmtIsoShort(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-interface DayData {
-  type: string;
-  lesson_num: string;
-  in_class: string;
-  at_home: string;
-  resources: string;
-  create_assign: boolean;
-  hint_override?: 'evens' | 'odds' | 'none' | null;
-}
-
-type WeekData = Record<string, Record<string, DayData>>;
-
 interface PacingEntryPageProps {
   activeQuarter: string;
   setActiveQuarter: (q: string) => void;
@@ -94,18 +68,6 @@ interface PacingEntryPageProps {
   quarterColor: string;
 }
 
-function emptyDay(): DayData {
-  return { type: '', lesson_num: '', in_class: '', at_home: '', resources: '', create_assign: true, hint_override: null };
-}
-
-function initWeekData(): WeekData {
-  const data: WeekData = {};
-  for (const subj of SUBJECTS) {
-    data[subj] = {};
-    for (const day of DAYS) data[subj][day] = emptyDay();
-  }
-  return data;
-}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -120,91 +82,8 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-// ── AUTO IN_CLASS ──────────────────────────────────────────
-function buildInClass(subject: string, d: DayData): string | null {
-  const explicit = (d.in_class || '').trim();
-  // Keep explicit values that aren't bare numbers
-  if (explicit && !/^\d+(\.\d+)?$/.test(explicit)) return explicit;
-  const n = (d.lesson_num || '').trim();
-  if (!n) return explicit || null;
-  switch (subject) {
-    case 'Math': {
-      const t = (d.type || '').toLowerCase();
-      if (t === 'test') return `Written Test ${n}`;
-      if (t === 'fact test') return `Fact Test ${n}`;
-      if (t === 'study guide') return `Study Guide ${n}`;
-      if (t === 'investigation') return `Investigation ${n}`;
-      return `Lesson ${n}`;
-    }
-    case 'Reading': return `Reading Lesson ${n}`;
-    case 'Spelling': return `Spelling Lesson ${n}`;
-    case 'Language Arts': {
-      const dot = n.match(/^(\d+)\.(\d+)$/);
-      if (dot) return `Chapter ${dot[1]}, Lesson ${dot[2]}`;
-      return explicit || `Chapter ${n}`;
-    }
-    case 'History':
-    case 'Science': return explicit || `Chapter ${n}`;
-    default: return explicit || `Lesson ${n}`;
-  }
-}
 
-// ── AUTO AT_HOME ────────────────────────────────────────────
-function buildAtHome(subject: string, d: DayData, isFriday: boolean): string | null {
-  if (isFriday) return null;
-  const explicit = (d.at_home || '').trim();
-  if (explicit) return explicit;
-  // No at_home for these (History, Science, ELA, Spelling handled via page)
-  if (['History', 'Science', 'Language Arts', 'Spelling'].includes(subject)) return null;
-  const type = (d.type || '').toLowerCase();
-  if (!type || type === '-' || type === 'no class' || type.includes('test') ||
-      type.includes('review') || type.includes('study guide')) return null;
-  const n = (d.lesson_num || '').trim();
-  if (!n) return null;
-  if (subject === 'Math') {
-    const hint = d.hint_override;
-    if (hint === 'none') return `Lesson ${n}`;
-    if (hint === 'evens') return `Lesson ${n} Evens`;
-    if (hint === 'odds') return `Lesson ${n} Odds`;
-    const num = parseInt(n);
-    return `Lesson ${n} ${isNaN(num) ? '' : num % 2 === 0 ? 'Evens' : 'Odds'}`.trim();
-  }
-  if (subject === 'Reading') return `Lesson ${n} Workbook`;
-  return null;
-}
 
-// ── AUTO RESOURCES from content_map ────────────────────────
-function buildResourceRefs(subject: string, d: DayData): string[] {
-  const n = (d.lesson_num || '').trim();
-  const num = parseInt(n);
-  const refs: string[] = [];
-  if (!n || isNaN(num)) return refs;
-  const pad3 = String(num).padStart(3, '0');
-  const pad2 = String(num).padStart(2, '0');
-  if (subject === 'Math' && d.type !== 'Test') {
-    refs.push('HW_Evens', 'HW_Odds', 'Math_Textbook', `Math_Lesson_${pad3}`);
-    if (POWER_UP_MAP[num]) refs.push(`Math_PowerUp_${POWER_UP_MAP[num]}`);
-    const rStart = Math.floor((num - 1) / 10) * 10 + 1;
-    refs.push(`Math_Reteaching_L${String(rStart).padStart(3, '0')}`);
-  }
-  if (subject === 'Math' && d.type === 'Test') {
-    refs.push(`Math_StudyGuide_${pad2}_Blank`, `Math_StudyGuide_${pad2}_Completed`);
-  }
-  if (subject === 'Reading') {
-    const chunk = Math.floor((num - 1) / 25) * 25 + 1;
-    refs.push(
-      `Reading_Book_L${String(chunk).padStart(3, '0')}`,
-      'Reading_Workbook_Part1', 'Reading_Workbook_Part2',
-      'Reading_Glossary_A', 'Reading_Glossary_B', 'Reading_Glossary_C',
-      'Spelling_Master_List',
-    );
-  }
-  if (subject === 'Language Arts' &&
-      (d.type === 'CP' || d.type === 'Classroom Practice')) {
-    refs.push(`Classroom_Practice_${pad3}`);
-  }
-  return refs;
-}
 
 
 function _buildAutoReminders(weekData: WeekData): string {
@@ -232,39 +111,8 @@ function _buildAutoReminders(weekData: WeekData): string {
   return lines.join('\n');
 }
 
-function buildAllResourceRefs(rows: any[]): Set<string> {
-  const refs = new Set<string>();
-  for (const row of rows) {
-    const n = row.lesson_num;
-    if (!n) continue;
-    const num = parseInt(n);
-    if (isNaN(num)) continue;
-    const pad3 = String(num).padStart(3, '0');
-    if (row.subject === 'Math' && row.type !== 'Test') {
-      refs.add('HW_Evens'); refs.add('HW_Odds'); refs.add('Math_Textbook');
-      refs.add(`Math_Lesson_${pad3}`);
-      if (POWER_UP_MAP[num]) refs.add(`Math_PowerUp_${POWER_UP_MAP[num]}`);
-      const reteachStart = Math.floor((num - 1) / 10) * 10 + 1;
-      refs.add(`Math_Reteaching_L${String(reteachStart).padStart(3, '0')}`);
-    }
-    if (row.subject === 'Math' && row.type === 'Test') {
-      const pad2 = String(num).padStart(2, '0');
-      refs.add(`Math_StudyGuide_${pad2}_Blank`);
-      refs.add(`Math_StudyGuide_${pad2}_Completed`);
-    }
-    if (row.subject === 'Reading') {
-      const chunkStart = Math.floor((num - 1) / 25) * 25 + 1;
-      refs.add(`Reading_Book_L${String(chunkStart).padStart(3, '0')}`);
-      refs.add('Reading_Workbook_Part1'); refs.add('Reading_Workbook_Part2');
-      refs.add('Reading_Glossary_A'); refs.add('Reading_Glossary_B'); refs.add('Reading_Glossary_C');
-      refs.add('Spelling_Master_List');
-    }
-    if (row.subject === 'Language Arts' && row.type === 'CP') {
-      refs.add(`Classroom_Practice_${pad3}`);
-    }
-  }
-  return refs;
-}
+
+
 
 export default function PacingEntryPage({
   activeQuarter,
