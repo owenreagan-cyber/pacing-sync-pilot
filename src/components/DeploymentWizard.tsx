@@ -33,6 +33,10 @@ interface AssignmentDraftRow {
   day: string;
   type: string | null;
   lesson_num: string | null;
+  is_synthetic?: boolean | null;
+  create_assign?: boolean | null;
+  canvas_assignment_id?: number | null;
+  content_hash?: string | null;
 }
 
 interface AnnouncementDraftRow {
@@ -86,6 +90,8 @@ export default function DeploymentWizard() {
   const [weekId, setWeekId] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<AssignmentDraftRow[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementDraftRow[]>([]);
+  // subject → latest page_deploy status; used for Step 3 attestation.
+  const [pageDeployStatus, setPageDeployStatus] = useState<Record<string, string>>({});
   const [loadingWeekData, setLoadingWeekData] = useState(false);
   const [runningTransition, setRunningTransition] = useState(false);
 
@@ -134,24 +140,38 @@ export default function DeploymentWizard() {
         return;
       }
 
-      const [{ data: assignmentRows }, { data: announcementRows }] = await Promise.all([
+      const [{ data: assignmentRows }, { data: announcementRows }, { data: deployRows }] = await Promise.all([
         supabase
           .from('pacing_rows')
-          .select('id, subject, day, type, lesson_num')
+          .select('id, subject, day, type, lesson_num, is_synthetic, create_assign, canvas_assignment_id, content_hash')
           .eq('week_id', id)
           .order('subject')
-          .order('day')
-          .limit(20),
+          .order('day'),
         supabase
           .from('announcements')
           .select('id, title, content, status')
           .eq('week_id', id)
           .order('created_at', { ascending: false })
           .limit(20),
+        supabase
+          .from('deploy_log')
+          .select('subject, status')
+          .eq('week_id', id)
+          .eq('action', 'page_deploy')
+          .order('created_at', { ascending: false }),
       ]);
 
       setAssignments((assignmentRows ?? []) as AssignmentDraftRow[]);
       setAnnouncements((announcementRows ?? []) as AnnouncementDraftRow[]);
+
+      // Reduce deploy_log → { subject: latest_status } for step 3 attestation.
+      const pageStatus: Record<string, string> = {};
+      for (const row of deployRows ?? []) {
+        if (row.subject && !pageStatus[row.subject]) {
+          pageStatus[row.subject] = row.status ?? 'UNKNOWN';
+        }
+      }
+      setPageDeployStatus(pageStatus);
     } finally {
       setLoadingWeekData(false);
     }
