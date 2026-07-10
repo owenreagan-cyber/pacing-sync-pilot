@@ -22,7 +22,21 @@ import { cn } from '@/lib/utils';
 import type { ContentMapEntry } from '@/lib/auto-link';
 import { loadSchoolCalendar, getWeekEvents, type CalendarEvent } from '@/lib/school-calendar';
 import { getPacingWeekDatesISO } from '@/lib/pacing-week';
-import { POWER_UP_MAP } from '@/lib/power-up-map';
+import {
+  SUBJECTS,
+  DAYS,
+  SUBJECT_TYPES,
+  isLanguageArtsAssignable,
+  emptyDay,
+  initWeekData,
+  buildInClass,
+  buildAtHome,
+  buildResourceRefs,
+  buildAllResourceRefs,
+  type DayData,
+  type WeekData,
+} from '@/lib/pacing';
+
 
 const SUBJECTS = ['Math', 'Reading', 'Spelling', 'Language Arts', 'History', 'Science'] as const;
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
