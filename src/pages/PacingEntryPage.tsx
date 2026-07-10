@@ -951,6 +951,14 @@ export default function PacingEntryPage({
         </div>
       )}
 
+      <ResourceCoveragePanel
+        rows={coverageRows}
+        contentMap={contentMap}
+        onMapped={loadContentMap}
+      />
+
+
+
       {/* ───────────────────────────────────────── */}
       {/* SECTION C: Subject-by-Subject Wizard       */}
       {/* ───────────────────────────────────────── */}
